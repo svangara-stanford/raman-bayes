@@ -15,6 +15,7 @@ Read docs/DESIGN.md before any work. It is authoritative; Section 15 decisions r
 - Small commits with Conventional Commit messages (feat:, fix:, test:, refactor:, docs:, chore:).
 - Do not start the next phase until the current phase's "done when" criteria in DESIGN.md §13 pass.
 - Ask before adding a dependency, changing a schema, or touching anything in §15.
+- For each sub-step: failing tests first, then implementation. Stop with a five-line summary (built, tested, unsure, deviations, next)
 
 ## Data
 - data/raw/ holds the test archives (gitignored). Fixture: tests/fixtures/nanofinder_mini/.
