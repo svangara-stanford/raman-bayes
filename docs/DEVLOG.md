@@ -32,3 +32,9 @@ Short, dated entries: what was done, what was decided, anything overridden. Newe
 - FITS column types are my choice, since §8.2 lists names only: `spectrum_id` uint32, `runtime_s` float64, `noise_sd` nullable float32, `error` nullable plain string, other string columns dictionary.
 - The schema constants carry no metadata; `run_manifest.json` and `schema_version` are attached per file at write time.
 - mypy: `ignore_missing_imports` override scoped to `pyarrow` / `pyarrow.*` (pyarrow 25 still ships no `py.typed`).
+
+## 2026-10-23 — Phase 0 sub-step 6: port Protocols
+- Branch `phase-0-05-results-ports`. Built `ports/engine.py` (frozen PreparedSpectrum and EngineConfig, `@runtime_checkable` PeakEngine) and `ports/backend.py` (ExecutionBackend per §7.3; `poll` returns `Mapping[int, TaskState]` using the provisional run models).
+- PeakEngine's `fit_many` has a body: the §6 default ("loops over `fit`"), one `default_rng(seed)` per SeedSequence, `zip(strict=True)`. Only explicit subclasses inherit it; a structural engine must still define `fit_many` itself, so `isinstance` rejects one without it.
+- PreparedSpectrum arrays are typed `NDArray[np.float64]` (mypy strict rejects bare `np.ndarray`); §6 does not fix the dtype.
+- ExecutionBackend is not `@runtime_checkable`, as in §7.3; conformance is checked by mypy (typed assignment of a dummy backend in the tests).
