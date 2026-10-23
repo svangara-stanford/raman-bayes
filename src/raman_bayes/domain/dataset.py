@@ -7,6 +7,8 @@ this module only defines the shapes and constants.
 from datetime import datetime
 from enum import IntFlag
 
+from pydantic import AwareDatetime
+
 from raman_bayes.domain._base import DomainModel
 
 FILENAME_RE = r"^(?P<scan>.+?)-z(?P<iz>\d+)y(?P<iy>\d+)x(?P<ix>\d+)\.txt$"
@@ -91,6 +93,8 @@ class DatasetManifest(ScanInfo):
 
     Extends ScanInfo so the §3 keys stay flat. The identity and provenance fields added here
     (``dataset_id``, ``sample``, ``content_hash``, ``created_at``) are provisional placement.
+    ``created_at`` is pipeline-generated and must be timezone-aware (written in UTC);
+    ``acquired_at`` stays naive because Info.txt records local time with no zone.
     """
 
     schema_version: str = MANIFEST_SCHEMA_VERSION
@@ -99,4 +103,4 @@ class DatasetManifest(ScanInfo):
     n_spectra: int
     filename_pattern: FilenamePattern = FilenamePattern()
     content_hash: str
-    created_at: datetime
+    created_at: AwareDatetime

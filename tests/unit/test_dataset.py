@@ -1,7 +1,7 @@
 """Dataset models (DESIGN.md §3, §4): QC bits, filename grammar, manifest structure."""
 
 import re
-from datetime import datetime
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 import numpy as np
@@ -196,6 +196,9 @@ def test_raw_stage_is_verbatim_text() -> None:
 
 finite = st.floats(allow_nan=False, allow_infinity=False)
 naive_dt = st.datetimes(min_value=datetime(1990, 1, 1), max_value=datetime(2100, 1, 1))
+utc_dt = st.datetimes(
+    min_value=datetime(1990, 1, 1), max_value=datetime(2100, 1, 1), timezones=st.just(UTC)
+)
 counts = st.integers(min_value=1, max_value=4096)
 axes = st.builds(AxisSpec, start_um=finite, stop_um=finite, step_um=finite)
 grids = st.builds(
@@ -226,7 +229,7 @@ manifests = st.builds(
     sample=st.none() | st.text(),
     n_spectra=counts,
     content_hash=st.text(alphabet="0123456789abcdef", min_size=1),
-    created_at=naive_dt,
+    created_at=utc_dt,
 )
 
 
@@ -247,3 +250,63 @@ def test_manifest_rejects_unknown_nested_key() -> None:
     with pytest.raises(ValidationError) as exc:
         GridSpec.model_validate({**grid, "x": {**axis, "points": 2}})
     assert exc.value.errors()[0]["loc"] == ("x", "points")
+
+
+def _manifest_fields(**overrides: Any) -> dict[str, Any]:
+    axis = {"start_um": 0.0, "stop_um": 0.0, "step_um": 0.0}
+    fields: dict[str, Any] = {
+        "scan": "NMC811_v0",
+        "acquired_at": datetime(2026, 5, 28, 15, 47, 23),
+        "duration_s": 2090.0,
+        "instrument": {"system": "s", "detector": "d", "positioner": "p", "raw_stage": ""},
+        "acq": {
+            "exposure_s": 0.2,
+            "n_accum": 5,
+            "ccd_temp_c": -72.0,
+            "central_pixel": 505,
+            "head_model": "DU920P_BEX2D",
+        },
+        "n_wn": 1024,
+        "n_series": 1,
+        "grid": {"nx": 1, "ny": 1, "nz": 1, "x": axis, "y": axis, "z": axis},
+        "dataset_id": "NMC811_v0-0123456789",
+        "sample": None,
+        "n_spectra": 1,
+        "content_hash": "0123456789",
+        "created_at": datetime(2026, 10, 23, 12, 0, tzinfo=UTC),
+    }
+    return fields | overrides
+
+
+def test_created_at_rejects_naive_datetime() -> None:
+    with pytest.raises(ValidationError) as exc:
+        DatasetManifest.model_validate(_manifest_fields(created_at=datetime(2026, 10, 23, 12, 0)))
+    (error,) = exc.value.errors()
+    assert error["loc"] == ("created_at",)
+    assert error["type"] == "timezone_aware"
+
+
+def test_created_at_rejects_naive_iso_string() -> None:
+    with pytest.raises(ValidationError):
+        DatasetManifest.model_validate(_manifest_fields(created_at="2026-10-23T12:00:00"))
+
+
+def test_created_at_keeps_utc_through_json() -> None:
+    manifest = DatasetManifest.model_validate(_manifest_fields())
+    assert manifest.model_dump(mode="json")["created_at"] == "2026-10-23T12:00:00Z"
+    restored = DatasetManifest.model_validate_json(manifest.model_dump_json())
+    assert restored.created_at.utcoffset() == timedelta(0)
+
+
+def test_created_at_accepts_other_offsets_as_same_instant() -> None:
+    pacific = datetime(2026, 10, 23, 5, 0, tzinfo=timezone(timedelta(hours=-7)))
+    manifest = DatasetManifest.model_validate(_manifest_fields(created_at=pacific))
+    assert manifest.created_at == datetime(2026, 10, 23, 12, 0, tzinfo=UTC)
+
+
+def test_acquired_at_stays_naive() -> None:
+    manifest = DatasetManifest.model_validate(_manifest_fields())
+    assert manifest.acquired_at.tzinfo is None
+    restored = DatasetManifest.model_validate_json(manifest.model_dump_json())
+    assert restored.acquired_at == datetime(2026, 5, 28, 15, 47, 23)
+    assert restored.acquired_at.tzinfo is None
