@@ -8,7 +8,8 @@ Read docs/DESIGN.md before any work. It is authoritative; Section 15 decisions r
 
 ## Rules
 - All Python runs via pixi. Never pip install globally.
-- cli/ imports only app/ and domain/. app/ never prints. Enforced by import-linter.
+- Import contracts (import-linter, DESIGN.md §2): cli/ imports only app/, domain/, config/ and raman_bayes.logging; nothing outside cli/ imports cli/; domain/ imports no other subpackage; app/ never imports rich or typer and never prints.
+- Packaging (DESIGN.md §2): runtime deps must have PyPI wheels. Any non-.py file read at runtime lives under src/raman_bayes/ and is loaded via importlib.resources, never by repo-relative path.
 - Tasks write only to their own shards/task=N/. Only the CLI driver writes catalog.sqlite.
 - No zero-fill: absent peaks are null in Parquet.
 - Every new module gets tests in the same PR. No test, no merge.
@@ -21,3 +22,4 @@ Read docs/DESIGN.md before any work. It is authoritative; Section 15 decisions r
 ## Data
 - data/raw/ holds the test archives (gitignored). Fixture: tests/fixtures/nanofinder_mini/.
 - Legacy priors CSVs: configs/priors/legacy/. Generate configs/priors/nmc_commercial.yaml from them (DESIGN.md §5).
+- Packaged default profile: src/raman_bayes/config/profiles/local.yaml. Site profiles (labpc, sherlock) live in configs/profiles/.

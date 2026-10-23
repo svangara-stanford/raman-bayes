@@ -1,6 +1,6 @@
-# raman-bayes — Design Brief (v0.3, adversarially reviewed)
+# raman-bayes — Design Brief (v0.4, adversarially reviewed)
 
-**Status:** approved for Phase 0–2 implementation. Engine, GUI, MCP, LLM helpers, Globus commands and derived quantities are out of scope. §16 records what was reviewed and why.
+**Status:** approved for Phase 0–2 implementation. The package is a plain PyPI wheel (§2 Packaging). Engine, GUI, MCP, LLM helpers, Globus commands and derived quantities are out of scope. §16 records what was reviewed and why.
 
 ## 1. Purpose
 
@@ -55,12 +55,13 @@ raman-bayes/
 │   │   └── templates/array.sbatch.j2
 │   ├── app/           # use-cases; take/return domain objects; never print
 │   │   ingest.py validate.py plan.py submit.py run_task.py status.py collect.py export.py
-│   ├── config/        # Pydantic Settings; profiles; ${VAR} expansion; RAMAN_* env override
+│   ├── config/        # Pydantic Settings; ${VAR} expansion; RAMAN_* env override
+│   │   └── profiles/local.yaml   # packaged default profile (importlib.resources)
 │   ├── logging.py     # stdlib logging setup (console + per-task file)
 │   └── cli/           # Typer + Rich; every command has --json; calls app/ only
 ├── schemas/           # JSON schemas generated from Pydantic (priors, manifest, cli outputs)
 ├── configs/
-│   ├── profiles/{local.yaml, labpc.yaml, sherlock.yaml}
+│   ├── profiles/{labpc.yaml, sherlock.yaml}   # site profiles, repo-level; local.yaml is packaged
 │   └── priors/
 │       ├── nmc_commercial.yaml
 │       └── legacy/{nmc_lithiation.csv, nmc_carbon.csv}
@@ -75,7 +76,13 @@ raman-bayes/
 └── data/              # GITIGNORED. data/raw/ holds the full test archives locally
 ```
 
-**Import rule (import-linter, CI):** `cli/` imports only `app/`, `domain/`, `config/`; `app/` never imports `cli/`.
+**Import rules (import-linter, CI).** Four contracts:
+1. `cli/` imports only `app/`, `domain/`, `config/` and `raman_bayes.logging` (indirect imports via `app/` are fine).
+2. Nothing outside `cli/` imports `raman_bayes.cli`.
+3. `domain/` imports no other `raman_bayes` subpackage ("domain: no I/O").
+4. `app/` does not import `rich` or `typer` ("app never prints"; ruff T20 enforces no `print` across `src/`).
+
+**Packaging.** `pip install raman-bayes` must work without pixi on Linux and macOS (Windows untested). Runtime dependencies must be available as PyPI wheels; conda-only packages are not allowed. Any non-`.py` file the code reads at runtime (profile defaults, the sbatch template) lives under `src/raman_bayes/` and is loaded with `importlib.resources`, never by a path relative to the repo. `configs/` and `schemas/` are repo-level: user overrides and generated artefacts, never read by installed code. pixi is the developer environment; `pixi.lock` pins what developers and CI use, `pyproject.toml` declares what users install.
 
 ## 3. Input data: the Nanofinder export format
 
@@ -356,12 +363,12 @@ Rollback journal (not WAL) on Sherlock. `raman runs import DIR` registers a run 
 
 ## 9. Configuration
 
-Pydantic Settings. Precedence: defaults < profile YAML < `RAMAN_*` env < CLI flags. Profile from `--profile` or `RAMAN_PROFILE`. Resolved config is frozen into `run_plan.json`.
+Pydantic Settings. Precedence: defaults < profile YAML < `RAMAN_*` env < CLI flags. `--profile` (or `RAMAN_PROFILE`) is a **name** or a **path**. A name resolves first to the packaged `raman_bayes/config/profiles/<name>.yaml`, then to `./configs/profiles/<name>.yaml`; a path is used as given. Default is `local`. Resolved config is frozen into `run_plan.json`.
 
 **`${VAR}` expansion:** only `${NAME}` syntax, expanded at load time; an unset variable is a hard error naming the variable and the profile key. Sherlock sets `SCRATCH` and `GROUP_HOME`; **Oak is not an environment variable**, so `archive_root` is a literal path you fill in.
 
 ```yaml
-# configs/profiles/local.yaml  (laptop)
+# raman_bayes/config/profiles/local.yaml  (packaged default; laptop)
 profile: local
 paths: {data_root: ./data/datasets, runs_root: ./data/runs, catalog: ./data/catalog.sqlite}
 backend: local
@@ -445,6 +452,8 @@ Exit codes: 0 ok · 2 validation · 3 nothing to do / already running · 4 backe
 
 **Full-data smoke (not in CI, documented in README).** Ingest **both** `NMC811-Exported-Data` and `NMC111-Exported-Data` (5 datasets, 11,250 spectra); run each with `mock`; < 3 min on a laptop. Presence-probability distributions should be comparable between NMC111 and NMC811 despite the ~3× intensity difference.
 
+**Wheel install in CI.** One ubuntu job builds the wheel (`python -m build`), installs it with `pip install dist/*.whl` into a plain venv (no pixi), and runs `raman --help` and `python -c "import raman_bayes"`. This catches files or dependencies missing from the wheel.
+
 **Slurm in CI.** Shim `sbatch`/`sacct`/`squeue` on PATH that run tasks locally and return scripted states (COMPLETED, PREEMPTED, TIMEOUT, OUT_OF_MEMORY). Real Sherlock smoke test is manual, once per release.
 
 ## 12. Development workflow
@@ -457,7 +466,7 @@ For each sub-step: failing tests first, then implementation; stop with a five-li
 
 | Phase | Builds | Done when |
 |---|---|---|
-| **0 Scaffold** | layout, pyproject, pixi, CI, pre-commit, stub models, import-linter, `raman --help`, logging setup | fresh clone → `pixi run test` green on Linux + macOS |
+| **0 Scaffold** | layout, pyproject, pixi, CI incl. wheel-install job, pre-commit, stub models, import-linter (4 contracts), `raman --help`, logging setup, packaged `local.yaml` (file only; loading is Phase 1) | fresh clone → `pixi run test` green on Linux + macOS; wheel installs and `raman --help` runs in a plain venv |
 | **1 Core pipeline (local)** | §3 reader/parser, fixture script, §5 PriorsSpec + CSV I/O + `nmc_commercial.yaml`, §4 ingest, preprocessing, MockEngine, chunking, run-task with lock/resume, LocalBackend, collect, exports, catalog with state machine, CLI | all §11 unit + integration tests pass including seed invariance; full-data smoke on both samples; legacy-csv header matches |
 | **2 Slurm** | SlurmArrayBackend, template with absolute `pixi_bin`, live-limit checks, status/cancel/resubmit, shims, `doctor` | 6250-spectrum mock run on `normal,owners` completes; simulated preemption loses ≤ 1 sub-batch; no duplicate rows; results identical to LocalBackend; `--signal` handler verified |
 | **3 (later) Real engine** | your sampler as a `PeakEngine` plugin; `derived:` quantities | golden tests; profile change only |
@@ -485,8 +494,14 @@ For each sub-step: failing tests first, then implementation; stop with a five-li
 | 10 | `dataset_id` hashed from written arrays, not raw files. |
 | 11 | Run lifecycle is an explicit state machine; `collect` requires `complete` or `--partial`. |
 | 12 | Deferred: GUI, MCP, LLM helpers, Globus, result cube, containers, PostgreSQL, derived quantities, time series. |
+| 13 | Plain-pip installable: PyPI-wheel deps only; runtime files loaded via `importlib.resources`; `local.yaml` packaged, site profiles repo-level; wheel-install CI job. |
 
-## 16. Review log (v0.2 → v0.3)
+## 16. Review log
+
+### v0.3 → v0.4 (packaging)
+- Decision 13. §2 Packaging paragraph and four import contracts written out; §9 profile-name resolution; §11 wheel-install job; §13 Phase 0 row. No change to architecture or data formats.
+
+### v0.2 → v0.3
 
 Adversarial review against the real sample data. Changes made:
 - **Info.txt**: discovered `Frame Dimentions` vs `Frame Stage` Z contradiction in `NMC811_v0-Info.txt`; parser is now section-aware with `Frame Dimentions` authoritative (§3).
