@@ -147,6 +147,19 @@ class DummyBackend:
         )
 
 
+class BackendWithoutResubmit:
+    name = "partial"
+
+    def submit(self, plan: RunPlan, *, dry_run: bool = False) -> SubmissionRecord:
+        raise NotImplementedError
+
+    def poll(self, run_id: str) -> Mapping[int, TaskState]:
+        return {}
+
+    def cancel(self, run_id: str, tasks: Sequence[int] | None = None) -> None:
+        return None
+
+
 # ---------------------------------------------------------------- engine inputs
 
 
@@ -219,6 +232,15 @@ def test_submit_dry_run_is_keyword_only() -> None:
     param = inspect.signature(ExecutionBackend.submit).parameters["dry_run"]
     assert param.kind is inspect.Parameter.KEYWORD_ONLY
     assert param.default is False
+
+
+def test_structural_backend_satisfies_protocol() -> None:
+    backend: ExecutionBackend = DummyBackend()  # checked by mypy in lint
+    assert isinstance(backend, ExecutionBackend)
+
+
+def test_backend_without_resubmit_is_rejected() -> None:
+    assert not isinstance(BackendWithoutResubmit(), ExecutionBackend)
 
 
 def test_dummy_backend_satisfies_protocol() -> None:
