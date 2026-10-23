@@ -38,3 +38,11 @@ Short, dated entries: what was done, what was decided, anything overridden. Newe
 - PeakEngine's `fit_many` has a body: the §6 default ("loops over `fit`"), one `default_rng(seed)` per SeedSequence, `zip(strict=True)`. Only explicit subclasses inherit it; a structural engine must still define `fit_many` itself, so `isinstance` rejects one without it.
 - PreparedSpectrum arrays are typed `NDArray[np.float64]` (mypy strict rejects bare `np.ndarray`); §6 does not fix the dtype.
 - ExecutionBackend is not `@runtime_checkable`, as in §7.3; conformance is checked by mypy (typed assignment of a dummy backend in the tests).
+
+## 2026-10-23 — Phase 0 sub-step 6 fix: backend runtime check and Protocol signature guard
+- Branch `phase-0-06-backend-typing-guard`. PR #5 was merged before this review fix was pushed, so the commit was cherry-picked here from the deleted `phase-0-05-results-ports` branch.
+- ExecutionBackend is now `@runtime_checkable`, matching PeakEngine; this supersedes the sub-step 6 bullet. Added isinstance tests: a full backend passes, one without `resubmit` fails.
+- `tests/unit/typing_checks_ports.py` is a signature guard that mypy checks and pytest does not collect. Typed assignments of a backend with a wrong `poll` return and an engine with a wrong `fit` return carry `# type: ignore[assignment]`. Under strict `warn_unused_ignores`, `pixi run lint` fails if either Protocol stops catching the mismatch. `isinstance` on runtime-checkable Protocols checks member names only, so both checks are kept. No subprocess-mypy test.
+- Accepted (PR #5 review): FITS column types as in sub-step 5 (`spectrum_id` uint32, `runtime_s` float64, `noise_sd` nullable float32, `error` nullable string, other string columns dictionary).
+- Accepted (PR #5 review): `presence_prob` is nullable float32 in PEAKS_SCHEMA.
+- Accepted (PR #5 review): PreparedSpectrum `wavenumber` and `intensity` are `NDArray[np.float64]`.

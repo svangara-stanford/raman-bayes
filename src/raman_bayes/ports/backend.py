@@ -5,11 +5,12 @@ source of truth. TaskState and SubmissionRecord are provisional models (``domain
 """
 
 from collections.abc import Mapping, Sequence
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from raman_bayes.domain.run import RunPlan, SubmissionRecord, TaskState
 
 
+@runtime_checkable
 class ExecutionBackend(Protocol):
     name: str
 
