@@ -13,13 +13,15 @@ Read docs/DESIGN.md before any work. It is authoritative; Section 15 decisions r
 - Tasks write only to their own shards/task=N/. Only the CLI driver writes catalog.sqlite.
 - No zero-fill: absent peaks are null in Parquet.
 - Every new module gets tests in the same PR. No test, no merge.
-- Small commits with Conventional Commit messages (feat:, fix:, test:, refactor:, docs:, chore:).
+- Small commits with Conventional Commit messages (feat:, fix:, test:, refactor:, docs:, chore:, ci:).
 - Do not start the next phase until the current phase's "done when" criteria in DESIGN.md §13 pass.
-- Ask before adding a dependency, changing a schema, or touching anything in §15.
-- For each sub-step: failing tests first, then implementation. Stop with a five-line summary (built, tested, unsure, deviations, next)
+- Ask before adding a dependency, changing a schema, or touching anything in §15. When a provisional model is finalized, propose the DESIGN.md patch first.
+- For each sub-step: failing tests first, then implementation. One commit per sub-step.
+- Branching: one branch per sub-step, or per batch of sub-steps I have explicitly approved as one PR, named phase-N-NN-topic (NN = first sub-step), always from main after I say "merged". Never branch from an unmerged branch.
+- When a branch is done: `pixi run test && pixi run lint` green, then push the branch and open a PR against main with `gh pr create`, using the five-line summary (built, tested, unsure, deviations, next) as the PR body. Print the same summary in chat and stop. Never merge; never push to main.
 - Each sub-step's commit includes an entry in docs/DEVLOG.md: date, branch, what was built in one line, and any decisions or deviations made in plan review or during the sub-step. I may append my own lines afterwards.
 
 ## Data
-- data/raw/ holds the test archives (gitignored). Fixture: tests/fixtures/nanofinder_mini/.
+- data/raw/ holds the test archives (gitignored). Fixture: tests/fixtures/nanofinder_mini/. Unit tests use tests/fixtures/, never data/raw/.
 - Legacy priors CSVs: configs/priors/legacy/. Generate configs/priors/nmc_commercial.yaml from them (DESIGN.md §5).
 - Packaged default profile: src/raman_bayes/config/profiles/local.yaml. Site profiles (labpc, sherlock) live in configs/profiles/.

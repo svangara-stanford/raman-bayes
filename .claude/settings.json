@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Edit(src/raman_bayes/domain/**)",
+      "Edit(src/raman_bayes/ports/**)",
+      "Edit(tests/**)",
+      "Edit(docs/DEVLOG.md)",
+      "Bash(pixi run test:*)",
+      "Bash(pixi run lint:*)",
+      "Bash(pixi run -e:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git switch:*)",
+      "Bash(git pull --ff-only:*)",
+      "Bash(git push -u origin phase-*)",
+      "Bash(gh pr create:*)",
+      "Bash(gh pr view:*)"
+    ],
+    "deny": [
+      "Edit(CLAUDE.md)",
+      "Edit(docs/DESIGN.md)",
+      "Edit(.github/**)",
+      "Edit(pixi.lock)",
+      "Bash(git push origin main:*)",
+      "Bash(git push --force:*)",
+      "Bash(gh pr merge:*)",
+      "Bash(pip install:*)",
+      "Bash(rm -rf:*)"
+    ]
+  }
+}
