@@ -1,0 +1,79 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "raman-bayes"
+version = "0.1.0.dev0"
+description = "Bayesian Raman peak-detection pipeline for hyperspectral maps (laptop, lab PC, Slurm)."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Sreya Vangara", email = "svangara@stanford.edu" }]
+# License intentionally omitted until Stanford OTL clears BSD-3-Clause (DESIGN.md §2).
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Typing :: Typed",
+]
+dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "pyarrow>=15",
+    "zarr>=3.0,<4",
+    "pydantic>=2.6,<3",
+    "typer>=0.12",
+    "rich>=13",
+    "pyyaml>=6",
+    "duckdb>=1.0",
+]
+
+[project.scripts]
+raman = "raman_bayes.cli.main:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/raman_bayes"]
+
+# ---------------------------------------------------------------- ruff
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+extend-exclude = [".pixi"]
+
+[tool.ruff.format]
+# Code blocks in Markdown (DESIGN.md) are illustrative spec text; never reformat them.
+exclude = ["*.md"]
+
+[tool.ruff.lint]
+# T20 (no print) applies to all of src/: app/ must never print, and cli/ writes through Rich.
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "NPY", "PT", "T20"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["T20"]
+"scripts/**" = ["T20"]
+
+# ---------------------------------------------------------------- mypy
+[tool.mypy]
+python_version = "3.11"
+strict = true
+plugins = ["pydantic.mypy"]
+files = ["src", "tests"]
+mypy_path = "src"
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+# ---------------------------------------------------------------- pytest
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
+xfail_strict = true
+# Every warning is an error. An ignore must name one specific warning and carry a comment
+# saying why; never add a blanket "ignore".
+filterwarnings = ["error"]
