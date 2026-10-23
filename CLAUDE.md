@@ -16,6 +16,7 @@ Read docs/DESIGN.md before any work. It is authoritative; Section 15 decisions r
 - Do not start the next phase until the current phase's "done when" criteria in DESIGN.md §13 pass.
 - Ask before adding a dependency, changing a schema, or touching anything in §15.
 - For each sub-step: failing tests first, then implementation. Stop with a five-line summary (built, tested, unsure, deviations, next)
+- Each sub-step's commit includes an entry in docs/DEVLOG.md: date, branch, what was built in one line, and any decisions or deviations made in plan review or during the sub-step. I may append my own lines afterwards.
 
 ## Data
 - data/raw/ holds the test archives (gitignored). Fixture: tests/fixtures/nanofinder_mini/.
