@@ -1,0 +1,37 @@
+# Verbatim copy of the DESIGN.md §5 example. Keep in sync if §5 changes.
+schema_version: "1.0"
+spec:
+  name: nmc_commercial
+  version: 1.0.0
+  status: approved            # draft | approved ; production runs require approved
+  source: "converted from [sample descriptor]_lithiation.csv and _carbon.csv (2026-07-06)"
+
+defaults:
+  presence: {prior: bernoulli, p: 0.35}
+  lineshape: pseudo_voigt
+  center:   {prior: normal_truncated, sd_rule: quarter_range}   # sd = (upper-lower)/4 unless peak sets sd
+  fwhm:     {prior: uniform}                                     # over the peak's bounds
+  likelihood: {model: student_t, nu: 5}
+
+preprocessing:                 # applied per window; see §7.2 for order
+  margin_cm1: 25
+  despike:  {method: median_mad, kernel: 3, thresh: 3.0}
+  baseline: {method: als, lam: 1.0e5, p: 0.01}
+  smoothing: null
+  clamp_nonnegative: true
+
+end_members:
+  - {id: lithiated_oxide, label: "NMC (lithiation-sensitive modes)", peaks: [u1, u2]}
+  - {id: carbon,          label: "Carbon black / binder",          peaks: [d, g]}
+
+windows:
+  - id: lithiation
+    range_cm1: [350, 700]
+    peaks:
+      - {id: u1, label: "ν1", center: {mean: 465, bounds: [445, 485]}, fwhm: {bounds: [35, 70]}}
+      - {id: u2, label: "ν2", center: {mean: 568, bounds: [550, 585]}, fwhm: {bounds: [30, 60]}}
+  - id: carbon
+    range_cm1: [1150, 1750]
+    peaks:
+      - {id: d, label: "D", center: {mean: 1335, bounds: [1310, 1370]}, fwhm: {bounds: [90, 220]}}
+      - {id: g, label: "G", center: {mean: 1584, bounds: [1548, 1620]}, fwhm: {bounds: [35, 125]}}
