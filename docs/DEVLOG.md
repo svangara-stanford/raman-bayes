@@ -24,3 +24,11 @@ Short, dated entries: what was done, what was decided, anything overridden. Newe
 - `SubmissionRecord.submitted_at` is `AwareDatetime`, following the `created_at` decision.
 - `RunPlan.engine_config` and `resolved_config` are JSON-valued dicts: domain cannot import `ports.EngineConfig`, and config models are Phase 1.
 - Slurm ids are strings (`sbatch --parsable` can return `id;cluster`; array tasks are `id_N`).
+
+## 2026-10-23 — Phase 0 sub-step 5: result models and Parquet schemas
+- Branch `phase-0-05-results-ports` (sub-steps 5 and 6 batched into one PR, approved). Built `domain/results.py`: frozen dataclasses PosteriorSummary, PeakPosterior, WindowFitResult (field for field as §6), and PEAKS_SCHEMA (41 columns, §8.2 order) and FITS_SCHEMA (fixed columns only; merge appends `diag_*`).
+- String identifiers are non-nullable `dictionary<int32, string>`; `end_member_id` is nullable (a peak may belong to no end member).
+- `presence_prob`, the 25 summary columns and both `*_at_bound_frac` are nullable float32.
+- FITS column types are my choice, since §8.2 lists names only: `spectrum_id` uint32, `runtime_s` float64, `noise_sd` nullable float32, `error` nullable plain string, other string columns dictionary.
+- The schema constants carry no metadata; `run_manifest.json` and `schema_version` are attached per file at write time.
+- mypy: `ignore_missing_imports` override scoped to `pyarrow` / `pyarrow.*` (pyarrow 25 still ships no `py.typed`).
