@@ -46,3 +46,11 @@ Short, dated entries: what was done, what was decided, anything overridden. Newe
 - Accepted (PR #5 review): FITS column types as in sub-step 5 (`spectrum_id` uint32, `runtime_s` float64, `noise_sd` nullable float32, `error` nullable string, other string columns dictionary).
 - Accepted (PR #5 review): `presence_prob` is nullable float32 in PEAKS_SCHEMA.
 - Accepted (PR #5 review): PreparedSpectrum `wavenumber` and `intensity` are `NDArray[np.float64]`.
+
+## 2026-10-23 — Phase 0 sub-step 7: logging setup and import-linter contracts
+- Branch `phase-0-07-logging-imports`. Built `raman_bayes/logging.py` (`setup_logging(level="WARNING", *, log_file=None)`) and the four §2 contracts as `forbidden` contracts in `[tool.importlinter]`; `pixi run lint` now runs `lint-imports`.
+- Logging: the `raman_bayes` logger has `propagate=False`. The stderr handler looks up `sys.stderr` at emit time, so it works when tests or the CLI swap stderr. The optional file handler is for Phase 1's per-task log. Repeated calls replace and close only the handlers `setup_logging` added.
+- Dropped `captureWarnings(True)` (plan review): it routes warnings to the `py.warnings` logger, which never reaches the `raman_bayes` handlers.
+- Contract 1 lists what cli may not import (ports, io, storage, preprocessing, engine, orchestration), with `allow_indirect_imports = true`; the package root stays importable for `__version__`. Contracts 2 and 3 also cover `raman_bayes.logging`.
+- Tests check that each contract's module list covers every top-level module (`pkgutil.iter_modules`), so a new top-level module must be explicitly allowed or forbidden. The plan required this for contract 1 only; I added it for contracts 2 and 3. A planted violation per contract, in a tmp copy of the tree, breaks exactly that contract.
+- `lint-imports --no-cache`, so no `.import_linter_cache/` appears and `.gitignore` is unchanged. pixi.toml changes tasks only; `pixi.lock` is unchanged. DESIGN.md and CLAUDE.md already state the contracts (v0.4), so neither is edited.

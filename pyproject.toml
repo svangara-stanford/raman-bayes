@@ -73,6 +73,72 @@ init_forbid_extra = true
 init_typed = true
 warn_required_dynamic_aliases = true
 
+# ---------------------------------------------------------------- import-linter
+# The four contracts of DESIGN.md §2. tests/unit/test_import_contracts.py checks that the
+# module lists cover every top-level module, so a new one must be allowed or forbidden here.
+[tool.importlinter]
+root_package = "raman_bayes"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+id = "cli-imports"
+name = "cli imports only app, domain, config and logging"
+type = "forbidden"
+source_modules = ["raman_bayes.cli"]
+forbidden_modules = [
+    "raman_bayes.ports",
+    "raman_bayes.io",
+    "raman_bayes.storage",
+    "raman_bayes.preprocessing",
+    "raman_bayes.engine",
+    "raman_bayes.orchestration",
+]
+# cli -> app -> storage is fine; only direct imports are forbidden.
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+id = "nobody-imports-cli"
+name = "nothing outside cli imports cli"
+type = "forbidden"
+source_modules = [
+    "raman_bayes.domain",
+    "raman_bayes.ports",
+    "raman_bayes.io",
+    "raman_bayes.storage",
+    "raman_bayes.preprocessing",
+    "raman_bayes.engine",
+    "raman_bayes.orchestration",
+    "raman_bayes.app",
+    "raman_bayes.config",
+    "raman_bayes.logging",
+]
+forbidden_modules = ["raman_bayes.cli"]
+
+[[tool.importlinter.contracts]]
+id = "domain-pure"
+name = "domain imports no other subpackage"
+type = "forbidden"
+source_modules = ["raman_bayes.domain"]
+forbidden_modules = [
+    "raman_bayes.ports",
+    "raman_bayes.io",
+    "raman_bayes.storage",
+    "raman_bayes.preprocessing",
+    "raman_bayes.engine",
+    "raman_bayes.orchestration",
+    "raman_bayes.app",
+    "raman_bayes.config",
+    "raman_bayes.cli",
+    "raman_bayes.logging",
+]
+
+[[tool.importlinter.contracts]]
+id = "app-never-prints"
+name = "app never imports rich or typer"
+type = "forbidden"
+source_modules = ["raman_bayes.app"]
+forbidden_modules = ["rich", "typer"]
+
 # ---------------------------------------------------------------- pytest
 [tool.pytest.ini_options]
 minversion = "8.0"
