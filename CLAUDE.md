@@ -20,6 +20,7 @@ Read docs/DESIGN.md before any work. It is authoritative; Section 15 decisions r
 - Branching: one branch per sub-step, or per batch of sub-steps I have explicitly approved as one PR, named phase-N-NN-topic (NN = first sub-step), always from main after I say "merged". Never branch from an unmerged branch.
 - When a branch is done: `pixi run test && pixi run lint` green, then push the branch and open a PR against main with `gh pr create`, using the five-line summary (built, tested, unsure, deviations, next) as the PR body. Print the same summary in chat and stop. Never merge; never push to main.
 - Each sub-step's commit includes an entry in docs/DEVLOG.md: date, branch, what was built in one line, and any decisions or deviations made in plan review or during the sub-step. I may append my own lines afterwards.
+- User-facing text (--help, error messages, log lines a user sees) never references repository paths or internal docs (DESIGN.md, schemas/, configs/, docs/). Installed users don't have the repo. Such references go in comments and docstrings.
 
 ## Data
 - data/raw/ holds the test archives (gitignored). Fixture: tests/fixtures/nanofinder_mini/. Unit tests use tests/fixtures/, never data/raw/.
