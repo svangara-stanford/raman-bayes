@@ -81,6 +81,7 @@ def test_root_help_lists_top_level_commands() -> None:
     for top in {name.split()[0] for name in NAMES}:
         assert top in result.stdout
     assert ESC not in result.output
+    assert "DESIGN.md" not in result.output  # installed users don't have it
 
 
 # ---------------------------------------------------------------- every command
@@ -116,6 +117,7 @@ def test_help_lists_shared_options(name: str) -> None:
     assert "--json" in result.stdout
     assert "--profile" in result.stdout
     assert ESC not in result.output
+    assert "DESIGN.md" not in result.output
 
 
 @pytest.mark.parametrize("name", NAMES)

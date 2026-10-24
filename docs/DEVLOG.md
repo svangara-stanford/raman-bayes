@@ -67,3 +67,4 @@ Short, dated entries: what was done, what was decided, anything overridden. Newe
 - Accepted Phase 0 gap: unhandled exceptions exit 1, which is outside the §10 codes.
 - Human-mode output goes to stdout for exit 0/3 and stderr for 2/4. Typer 0.27 vendors Click (`typer._click`), so the test walks the command tree by its `commands` mapping instead of using `isinstance(click.Group)`.
 - Config: mypy `files` now includes `scripts/`; new pixi task `gen-schemas`. No dependency changes; `pixi.lock` is unchanged.
+- Fix (PR #8 review): `--help` text no longer cites DESIGN.md (root help and `--profile`), since installed users don't have it; comments and docstrings keep the references. The help tests now assert that no `--help` output mentions DESIGN.md.

@@ -21,7 +21,7 @@ JsonOpt = Annotated[
         "--json", help="Write one JSON envelope (schemas/cli/envelope.schema.json) to stdout."
     ),
 ]
-ProfileOpt = Annotated[str, typer.Option("--profile", help="Profile name or path (DESIGN.md §9).")]
+ProfileOpt = Annotated[str, typer.Option("--profile", help="Profile name or path.")]
 RunArg = Annotated[str, typer.Argument(metavar="RUN", help="Run id.")]
 
 
@@ -34,7 +34,7 @@ def _typer(help_: str) -> typer.Typer:
     )
 
 
-app = _typer("Bayesian Raman peak-detection pipeline (DESIGN.md).")
+app = _typer("Bayesian Raman peak-detection pipeline.")
 datasets_app = _typer("Inspect ingested datasets.")
 priors_app = _typer("Convert priors between YAML and the legacy CSV format.")
 runs_app = _typer("Inspect and register runs.")
