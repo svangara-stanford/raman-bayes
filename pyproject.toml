@@ -60,7 +60,7 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "NPY", "PT", "T20"]
 python_version = "3.11"
 strict = true
 plugins = ["pydantic.mypy"]
-files = ["src", "tests"]
+files = ["src", "tests", "scripts"]
 mypy_path = "src"
 
 # pyarrow ships no type hints (no py.typed); scope the ignore to pyarrow only.

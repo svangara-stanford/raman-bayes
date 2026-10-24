@@ -54,3 +54,16 @@ Short, dated entries: what was done, what was decided, anything overridden. Newe
 - Contract 1 lists what cli may not import (ports, io, storage, preprocessing, engine, orchestration), with `allow_indirect_imports = true`; the package root stays importable for `__version__`. Contracts 2 and 3 also cover `raman_bayes.logging`.
 - Tests check that each contract's module list covers every top-level module (`pkgutil.iter_modules`), so a new top-level module must be explicitly allowed or forbidden. The plan required this for contract 1 only; I added it for contracts 2 and 3. A planted violation per contract, in a tmp copy of the tree, breaks exactly that contract.
 - `lint-imports --no-cache`, so no `.import_linter_cache/` appears and `.gitignore` is unchanged. pixi.toml changes tasks only; `pixi.lock` is unchanged. DESIGN.md and CLAUDE.md already state the contracts (v0.4), so neither is edited.
+
+## 2026-10-23 — Phase 0 sub-step 8: CLI stubs and the --json envelope
+- Branch `phase-0-08-cli-stubs`. Built `cli/output.py` (ExitCode 0/2/3/4, CliEnvelope, `make_console`, `emit`), `cli/main.py` (all 18 §10 commands as stubs that exit 3) and `scripts/gen_schemas.py`, which writes `schemas/cli/envelope.schema.json`; a test fails if the committed file is stale (`pixi run gen-schemas`).
+- Every command has `--json` and `--profile` (plain str, default `local`, ignored by the stubs; added in plan review so `--help` shows the full §9/§10 surface). `run-task` has `--workers` (int ≥ 1); `priors export-csv` requires `--window-id`.
+- Arguments beyond the §10 table: `ingest --allow-axis-mismatch` (§3), `priors import-csv --window-id --range LO HI` (§5), and the `export` options with §8.4 defaults. `submit --dry-run --confirm` together is not rejected yet.
+- Plain Click help via `rich_markup_mode=None`: Typer forces a Rich terminal when GITHUB_ACTIONS, FORCE_COLOR or PY_COLORS is set, which would put ANSI into piped `--help` on CI.
+- Strict no-ANSI: when stdout (or stderr) is not a TTY, `make_console` emits no ANSI even if FORCE_COLOR is set.
+- `pretty_exceptions_enable=False`: tracebacks are plain stdlib ones, no Rich.
+- CliEnvelope is provisional (§10 only says output validates against `schemas/cli/`): schema_version, command, exit_code, ok (must equal `exit_code == 0`), message, data, warnings, errors.
+- Accepted Phase 0 gap: Click usage errors (exit 2) print plain text, not an envelope, even under `--json`.
+- Accepted Phase 0 gap: unhandled exceptions exit 1, which is outside the §10 codes.
+- Human-mode output goes to stdout for exit 0/3 and stderr for 2/4. Typer 0.27 vendors Click (`typer._click`), so the test walks the command tree by its `commands` mapping instead of using `isinstance(click.Group)`.
+- Config: mypy `files` now includes `scripts/`; new pixi task `gen-schemas`. No dependency changes; `pixi.lock` is unchanged.

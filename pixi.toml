@@ -38,6 +38,7 @@ lint-types = "mypy"
 # --no-cache: no .import_linter_cache/ in the tree (the tests also plant violations in tmp copies).
 lint-imports = "lint-imports --no-cache"
 fmt = "ruff format . && ruff check --fix ."
+gen-schemas = "python scripts/gen_schemas.py"
 
 [feature.py311.dependencies]
 python = "3.11.*"

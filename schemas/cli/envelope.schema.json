@@ -1,0 +1,84 @@
+{
+  "$defs": {
+    "ExitCode": {
+      "description": "Process exit codes (\u00a710). Click usage errors also exit 2.",
+      "enum": [
+        0,
+        2,
+        3,
+        4
+      ],
+      "title": "ExitCode",
+      "type": "integer"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The single JSON object a command writes to stdout under ``--json`` (provisional).",
+  "properties": {
+    "command": {
+      "title": "Command",
+      "type": "string"
+    },
+    "data": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Data"
+    },
+    "errors": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Errors",
+      "type": "array"
+    },
+    "exit_code": {
+      "$ref": "#/$defs/ExitCode"
+    },
+    "message": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Message"
+    },
+    "ok": {
+      "title": "Ok",
+      "type": "boolean"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "warnings": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+    }
+  },
+  "required": [
+    "command",
+    "exit_code",
+    "ok"
+  ],
+  "title": "CliEnvelope",
+  "type": "object"
+}
