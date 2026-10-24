@@ -14,7 +14,7 @@ from raman_bayes.cli.output import CliEnvelope, ExitCode
 ROOT = Path(__file__).resolve().parents[2]
 ESC = "\x1b"
 # User-visible text must not cite repo paths or internal docs; installed users have neither.
-REPO_REFS = ("DESIGN.md", "§", "schemas/", "docs/", "tests/", "Phase")
+REPO_REFS = ("DESIGN.md", "§", "schemas/", "configs/", "docs/", "tests/", "Phase")
 
 # Minimal valid argv for every DESIGN.md §10 command, keyed by its command path.
 COMMANDS: dict[str, list[str]] = {

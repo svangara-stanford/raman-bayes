@@ -1,0 +1,6 @@
+# raman_bayes/config/profiles/local.yaml  (packaged default; laptop)
+profile: local
+paths: {data_root: ./data/datasets, runs_root: ./data/runs, catalog: ./data/catalog.sqlite}
+backend: local
+local: {workers: 8}
+engine: {name: mock}

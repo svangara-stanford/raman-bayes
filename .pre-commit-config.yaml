@@ -1,0 +1,47 @@
+# Run with `pixi run pre-commit run --all-files`. The ruff, mypy and import-linter hooks call
+# pixi, so they use the versions pinned in pixi.lock rather than separate hook environments.
+# The legacy priors CSVs are verbatim inputs (BOM, line endings and missing final newline are
+# what the CSV reader must handle), so the fixers never touch them.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-yaml
+      - id: check-toml
+      - id: end-of-file-fixer
+        exclude: ^(pixi\.lock|configs/priors/legacy/.*)$
+      - id: trailing-whitespace
+        exclude: ^(pixi\.lock|configs/priors/legacy/.*)$
+        args: [--markdown-linebreak-ext=md]
+      - id: check-added-large-files
+        exclude: ^pixi\.lock$  # ~550 KB, over the 500 KB default
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: pixi run ruff check --fix --force-exclude
+        language: system
+        types_or: [python, pyi]
+      - id: ruff-format
+        name: ruff format
+        entry: pixi run ruff format --force-exclude
+        language: system
+        types_or: [python, pyi]
+      - id: mypy
+        name: mypy
+        entry: pixi run mypy
+        language: system
+        types: [python]
+        pass_filenames: false
+      - id: lint-imports
+        name: import-linter
+        entry: pixi run lint-imports --no-cache
+        language: system
+        types: [python]
+        pass_filenames: false

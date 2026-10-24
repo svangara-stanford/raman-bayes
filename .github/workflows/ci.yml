@@ -1,0 +1,70 @@
+name: CI
+
+# Pull requests, plus pushes to main (merges). Not every push, so PR branches don't run twice.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint-test:
+    name: lint + test (${{ matrix.os }}, ${{ matrix.env }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # osx-64 stays in pixi.lock but is not run: GitHub has retired the Intel macOS runners.
+        os: [ubuntu-latest, macos-latest]
+        env: [py311, py312, py313]
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: prefix-dev/setup-pixi@v0.11.2
+        with:
+          pixi-version: v0.83.0
+          locked: true  # pixi install --locked: fails if pixi.lock is stale
+          environments: ${{ matrix.env }}
+      - run: pixi run -e ${{ matrix.env }} lint
+      - run: pixi run -e ${{ matrix.env }} test
+
+  pre-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: prefix-dev/setup-pixi@v0.11.2
+        with:
+          pixi-version: v0.83.0
+          locked: true
+      - run: pixi run pre-commit run --all-files --show-diff-on-failure
+
+  # DESIGN.md §11: the wheel must install and run with plain pip, no pixi.
+  wheel-install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.11"  # lowest supported version
+      - run: python -m pip install build
+      - run: python -m build --wheel
+      - run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install dist/*.whl
+      - name: Smoke-test the installed wheel
+        working-directory: ${{ runner.temp }}  # outside the checkout, so src/ is not importable
+        run: |
+          venv="$RUNNER_TEMP/venv/bin"
+          "$venv/raman" --help
+          "$venv/python" -c "import raman_bayes"
+          "$venv/python" -c "from importlib.resources import files; assert files('raman_bayes.config').joinpath('profiles', 'local.yaml').is_file()"
+          set +e; "$venv/raman" doctor --json; code=$?; set -e
+          test "$code" -eq 3
