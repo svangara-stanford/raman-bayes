@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from types import ModuleType
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 COMMITTED = ROOT / "schemas/cli/envelope.schema.json"
 
@@ -37,3 +39,11 @@ def test_schema_shape() -> None:
     assert {"command", "exit_code", "ok"} <= set(schema["required"])
     exit_code = schema["$defs"]["ExitCode"]
     assert exit_code["enum"] == [0, 2, 3, 4]
+
+
+def test_help_cites_no_repo_paths(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        _load_script().main(["--help"])
+    out = capsys.readouterr().out
+    for ref in ("schemas/", "tests/", "DESIGN.md", "§"):
+        assert ref not in out

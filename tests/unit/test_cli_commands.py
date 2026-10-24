@@ -13,6 +13,8 @@ from raman_bayes.cli.output import CliEnvelope, ExitCode
 
 ROOT = Path(__file__).resolve().parents[2]
 ESC = "\x1b"
+# User-visible text must not cite repo paths or internal docs; installed users have neither.
+REPO_REFS = ("DESIGN.md", "§", "schemas/", "docs/", "tests/", "Phase")
 
 # Minimal valid argv for every DESIGN.md §10 command, keyed by its command path.
 COMMANDS: dict[str, list[str]] = {
@@ -54,6 +56,11 @@ def _schema_properties() -> set[str]:
     return set(schema["properties"])
 
 
+def _assert_no_repo_refs(text: str) -> None:
+    for ref in REPO_REFS:
+        assert ref not in text, f"user-visible text cites {ref!r}"
+
+
 def _leaf_commands(group: Any, prefix: str = "") -> set[str]:
     # Typer 0.27 vendors Click (typer._click), so walk groups by their ``commands`` mapping.
     leaves: set[str] = set()
@@ -81,7 +88,7 @@ def test_root_help_lists_top_level_commands() -> None:
     for top in {name.split()[0] for name in NAMES}:
         assert top in result.stdout
     assert ESC not in result.output
-    assert "DESIGN.md" not in result.output  # installed users don't have it
+    _assert_no_repo_refs(result.output)
 
 
 # ---------------------------------------------------------------- every command
@@ -94,6 +101,7 @@ def test_stub_exits_nothing_to_do(name: str) -> None:
     assert f"raman {name}: not implemented yet" in result.stdout
     assert result.stderr == ""
     assert ESC not in result.output
+    _assert_no_repo_refs(result.output)
 
 
 @pytest.mark.parametrize("name", NAMES)
@@ -108,6 +116,8 @@ def test_stub_json_envelope(name: str) -> None:
     assert env.exit_code is ExitCode.NOTHING_TO_DO
     assert env.ok is False
     assert set(json.loads(lines[0])) == _schema_properties()
+    assert env.message is not None
+    _assert_no_repo_refs(env.message)
 
 
 @pytest.mark.parametrize("name", NAMES)
@@ -117,7 +127,7 @@ def test_help_lists_shared_options(name: str) -> None:
     assert "--json" in result.stdout
     assert "--profile" in result.stdout
     assert ESC not in result.output
-    assert "DESIGN.md" not in result.output
+    _assert_no_repo_refs(result.output)
 
 
 @pytest.mark.parametrize("name", NAMES)

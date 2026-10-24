@@ -19,7 +19,7 @@ def render_envelope_schema() -> str:
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description="Generate the CLI JSON schemas.")
     parser.add_argument("--out", type=Path, default=ENVELOPE_SCHEMA)
     args = parser.parse_args(argv)
     out: Path = args.out

@@ -17,9 +17,7 @@ DEFAULT_PROFILE = "local"
 
 JsonOpt = Annotated[
     bool,
-    typer.Option(
-        "--json", help="Write one JSON envelope (schemas/cli/envelope.schema.json) to stdout."
-    ),
+    typer.Option("--json", help="Write one JSON envelope to stdout."),
 ]
 ProfileOpt = Annotated[str, typer.Option("--profile", help="Profile name or path.")]
 RunArg = Annotated[str, typer.Argument(metavar="RUN", help="Run id.")]
@@ -48,7 +46,7 @@ def _stub(command: str, as_json: bool) -> NoReturn:
         command=command,
         exit_code=ExitCode.NOTHING_TO_DO,
         ok=False,
-        message=f"raman {command}: not implemented yet (Phase 1)",
+        message=f"raman {command}: not implemented yet",
     )
     emit(envelope, as_json=as_json)
     raise typer.Exit(code=envelope.exit_code)
