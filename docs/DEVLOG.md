@@ -2,7 +2,7 @@
 
 Short, dated entries: what was done, what was decided, anything overridden. Newest at the bottom.
 
-## 2026-10-23 — Phase 0 scaffold
+## 2026-10-22 — Phase 0 scaffold
 - Started Phase 0 with Claude Code.
 - Import contract: cli/ may also import config/ and raman_bayes.logging (both docs updated).
 
@@ -69,3 +69,15 @@ Short, dated entries: what was done, what was decided, anything overridden. Newe
 - Config: mypy `files` now includes `scripts/`; new pixi task `gen-schemas`. No dependency changes; `pixi.lock` is unchanged.
 - Fix (PR #8 review): `--help` text no longer cites DESIGN.md (root help and `--profile`), since installed users don't have it; comments and docstrings keep the references. The help tests now assert that no `--help` output mentions DESIGN.md.
 - Fix (PR #8 review): rule from now on: help text, error messages and other user-visible output cite no repo paths or internal docs; those references go in comments and docstrings. Applied to the `--json` help (drops `schemas/cli/envelope.schema.json`), the stub message (drops "(Phase 1)"), and `gen_schemas.py --help` (no longer prints the module docstring). The CLI tests now check every `--help`, stub message and envelope message for DESIGN.md, §, schemas/, docs/, tests/ and "Phase".
+
+## 2026-10-23 — Phase 0 sub-step 9: pre-commit, CI, packaged profile, project docs
+- Branch `phase-0-09-ci-docs`. Built `.pre-commit-config.yaml`, `.github/workflows/ci.yml`, `src/raman_bayes/config/profiles/local.yaml` (the §9 YAML), README, CHANGELOG, CITATION.cff, and `.gitkeep` in `tests/integration/`, `tests/regression/`, `docs/adr/`.
+- CI runs on pull_request and on push to main only (plan review), so PR branches don't run twice. Every job has `timeout-minutes: 30` (draft review). Matrix {ubuntu, macos} × {py311, py312, py313}, pixi v0.83.0 with `locked: true`; a pre-commit job; a `wheel-install` job (§11) that builds with `python -m build` on Python 3.11, installs into a plain venv, and runs `raman --help`, `import raman_bayes`, an `importlib.resources` check for `local.yaml`, and `raman doctor --json` (exit 3). osx-64 is locked but not run.
+- `ci.yml` was drafted by me and copied into place by Sreya: `.claude/settings.json` denies me edits under `.github/`.
+- Added `hatchling>=1.24` to the `dev` feature (approved) so a unit test can build the wheel and check its contents: `local.yaml` byte-identical, `py.typed`, the `raman` entry point, nothing outside `raman_bayes/`. The lock only adds hatchling, editables, tomlkit and trove-classifiers.
+- `tests/unit/test_project_files.py` pins the approved CI and pre-commit choices (triggers, matrix vs pixi envs, pixi version, pinned action and hook versions, local hooks through pixi) and checks CITATION.cff against pyproject.
+- pre-commit: `pixi.lock` (~550 KB) is also excluded from check-added-large-files, not only from the whitespace fixers as planned. The legacy priors CSVs are excluded from end-of-file-fixer and trailing-whitespace: the fixer added a final newline to both, and they must stay verbatim (§5 round-trip, BOM/line-ending handling).
+- README doc links are absolute GitHub URLs, since the README is the PyPI long description.
+- `configs/` added to the CLI tests' forbidden user-visible fragments, following the new CLAUDE.md rule.
+- Fixed the date of the first entry (Phase 0 scaffold): 2026-10-23 → 2026-10-22.
+- Short entry by agreement: Phase 0 decisions and gaps are already in each sub-step's entry.

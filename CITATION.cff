@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: raman-bayes
+abstract: "Bayesian Raman peak-detection pipeline for hyperspectral maps (laptop, lab PC, Slurm)."
+version: 0.1.0.dev0
+repository-code: "https://github.com/svangara-stanford/raman-bayes"
+authors:
+  - family-names: Vangara
+    given-names: Sreya
+    orcid: "https://orcid.org/0000-0002-4762-8773"
