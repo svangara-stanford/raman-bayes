@@ -31,10 +31,12 @@ types-pyyaml = ">=6"
 
 [feature.dev.tasks]
 test = "pytest"
-lint = { depends-on = ["lint-ruff", "lint-format", "lint-types"] }
+lint = { depends-on = ["lint-ruff", "lint-format", "lint-types", "lint-imports"] }
 lint-ruff = "ruff check ."
 lint-format = "ruff format --check ."
 lint-types = "mypy"
+# --no-cache: no .import_linter_cache/ in the tree (the tests also plant violations in tmp copies).
+lint-imports = "lint-imports --no-cache"
 fmt = "ruff format . && ruff check --fix ."
 
 [feature.py311.dependencies]
