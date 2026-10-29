@@ -1,6 +1,6 @@
 # Phase 1 plan
 
-Status: proposed, awaiting approval. Nothing in this plan has been implemented.
+Status: superseded by CLAUDE.md (Batch mode) for branching, PRs and order of work, and by `docs/plans/phase-1-tests.md` for tests. Kept as the record of the Phase 1 data findings.
 Date: 2026-10-29. Base: `main` at `ee0980c` (Phase 0 complete; CI green on all 8 jobs).
 
 Phase 1 is the end-to-end pipeline with the mock engine: ingest, priors, plan, run-task,
@@ -28,7 +28,14 @@ the real value per file. The §11 and §16 patches are in section 6.
 
 ### 1.2 Info.txt layout differs from §3 in three places
 
-All five files share one layout (104 lines, CRLF, ASCII; same line numbers for every section).
+All five files share one layout (CRLF, ASCII; same line numbers for every section). NMC811 files
+are 104 lines long; NMC111 files are 102. The NMC111 files lack the last two lines of the
+`Channel : 0` subsection, `Center Row = 136` and `Track Height = 15`. This is a readout-mode
+difference: NMC111 is `Readout Mode: Full Vertical Binning` and NMC811 is
+`Readout Mode: Single Track`, and only Single Track readout has a center row and track height.
+None of the three keys (`Readout Mode`, `Center Row`, `Track Height`) is stored, and the parser
+must not require `Center Row` or `Track Height` (decided 2026-10-29). An earlier draft of this
+plan said all five files were 104 lines.
 The parser must handle these three differences from §3:
 
 1. **Section structure.**

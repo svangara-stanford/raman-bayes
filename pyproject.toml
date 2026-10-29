@@ -49,11 +49,51 @@ exclude = ["*.md"]
 
 [tool.ruff.lint]
 # T20 (no print) applies to all of src/: app/ must never print, and cli/ writes through Rich.
-select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "NPY", "PT", "T20"]
+# The second line enforces the CLAUDE.md code standards: C90 and PLR keep functions small and
+# flat, ARG forbids unused parameters, ERA forbids commented-out code, TRY and BLE001 keep
+# exception handling narrow (no bare `except Exception`), TD003 requires an issue link on every
+# TODO, and D requires a contract docstring on every public object.
+select = [
+    "E", "F", "W", "I", "UP", "B", "SIM", "RUF", "NPY", "PT", "T20",
+    "C90", "PLR", "ARG", "ERA", "TRY", "BLE001", "TD003", "D",
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+# "Functions fit on a screen; more than five parameters means the arguments want to be a model."
+# These are ruff's defaults, pinned so a ruff upgrade cannot loosen them.
+[tool.ruff.lint.pylint]
+max-args = 5
+max-positional-args = 5
+max-branches = 12
+max-returns = 6
+max-statements = 50
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["T20"]
+"tests/**" = [
+    "T20",
+    # Test names state the behaviour under test; a docstring would repeat the name.
+    "D101", "D102", "D103",
+    # A literal expected value is the assertion; naming it as a constant would hide it.
+    "PLR2004",
+]
+# Dummy backends and engines must match the Protocol signatures they stand in for, so their
+# parameters are unused by design.
+"tests/unit/test_ports.py" = ["ARG002"]
+"tests/unit/typing_checks_ports.py" = ["ARG002"]
 "scripts/**" = ["T20"]
+"src/raman_bayes/cli/main.py" = [
+    # Typer turns each command-line option into one function parameter, so a command's arity
+    # is its option count (DESIGN.md §10) and cannot be grouped into a model.
+    "PLR0913", "PLR0917",
+    # Temporary: the stub commands ignore their parameters until each is implemented. Remove
+    # in sub-step 14, when the last stub is replaced.
+    "ARG001",
+]
 
 # ---------------------------------------------------------------- mypy
 [tool.mypy]

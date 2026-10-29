@@ -1,4 +1,4 @@
-# raman-bayes — Design Brief (v0.5, 2026-10-29, adversarially reviewed)
+# raman-bayes — Design Brief (v0.6, 2026-10-29, adversarially reviewed)
 
 **Status:** approved for Phase 0–2 implementation. The package is a plain PyPI wheel (§2 Packaging). Engine, GUI, MCP, LLM helpers, Globus commands and derived quantities are out of scope. §16 records what was reviewed and why.
 
@@ -32,7 +32,7 @@ raman-bayes/
 │   ├── domain/        # Pydantic models + validation. No I/O.
 │   │   ├── priors.py         PriorsSpec, Window, Peak, EndMember
 │   │   ├── dataset.py        DatasetManifest, ScanInfo, GridSpec
-│   │   ├── run.py            RunConfig, RunPlan, TaskSpec, RunStatus
+│   │   ├── run.py            RunConfig, RunPlan, TaskSpec, RunStatus, TaskStatus, TaskState, SubmissionRecord
 │   │   └── results.py        PeakPosterior, WindowFitResult, PosteriorSummary, PEAKS_SCHEMA, FITS_SCHEMA
 │   ├── ports/         # typing.Protocol: PeakEngine, ExecutionBackend
 │   ├── io/
@@ -130,6 +130,42 @@ Fields parsed into the manifest:
 
 Coordinates: `x_um = grid.x.start_um + ix * grid.x.step_um` (same for y, z). Store both indices and µm.
 
+**ScanInfo** (`domain/dataset.py`) is what the Info.txt parser returns for one `<scan>-Info.txt`: the fields of the table above and nothing read from spectrum files. Every dataset model is frozen and rejects unknown keys.
+
+```python
+class AxisSpec:                  # one Frame Dimentions axis
+    start_um: float; stop_um: float; step_um: float
+class GridSpec:
+    nx: int; ny: int; nz: int    # each >= 1
+    x: AxisSpec; y: AxisSpec; z: AxisSpec
+    allow_partial: bool = False
+class InstrumentInfo:
+    system: str; detector: str; positioner: str
+    raw_stage: str               # the Frame Stage block as text (rule 4)
+class AcquisitionInfo:
+    exposure_s: float            # > 0
+    n_accum: int                 # >= 1
+    ccd_temp_c: float
+    central_pixel: int           # >= 0
+    head_model: str
+class ScanInfo:
+    scan: str                    # non-empty
+    acquired_at: datetime        # naive local time
+    duration_s: float            # >= 0
+    instrument: InstrumentInfo
+    acq: AcquisitionInfo
+    n_wn: int                    # >= 1
+    n_series: int                # must be 1 (rule 5)
+    grid: GridSpec
+```
+- `scan` is the Info.txt filename without `-Info.txt`. Ingest requires the folder name and the `scan` group of every spectrum filename to equal it; a mismatch is an error naming the first offending file.
+- `acquired_at` is `Date:` (`M/D/YYYY`) combined with `Time Start:` (12-hour `h:mm:ss AM/PM`). It is naive because Info.txt records local time with no zone. `duration_s = Time End − Time Start` on that date; a negative value is an error, not a midnight wrap.
+- Axes: with 1 point, `start_um = stop_um = Axis position, [um]` and `step_um = 0`. With n > 1 points, `step_um ≠ 0` and `|start_um + (n − 1)·step_um − stop_um| ≤ |step_um| / 2` (Info.txt rounds to 4 decimals). A violation is a validation error naming the axis.
+- `raw_stage` runs from the line after `Frame Stage:` to the line before `Scan detection channel information`. Line endings are normalised to `\n` and nothing else changes (flag lines and single-space blank lines are kept), so CRLF and LF copies of one file give the same manifest.
+- `Readout Mode`, `Center Row` and `Track Height` are not stored. The channel section's length depends on the readout mode: the NMC111 files (`Full Vertical Binning`) have no `Center Row` or `Track Height` lines and are 102 lines long, against 104 for NMC811 (`Single Track`). The parser never relies on line numbers and does not require either line.
+- Keys not in the table are ignored. A missing required key is an error naming its section and key. The parser refuses `n_series ≠ 1` (rule 5) before building ScanInfo; the model rejects it too.
+- Every spectrum file must have exactly `n_wn` rows; otherwise ingest fails naming the file.
+
 **QC flags (uint16 bits):** 0 `nan_or_inf`, 1 `saturated`, 2 `axis_mismatch`, 3 `negative`. Saturation threshold = `acq.n_accum × 65535` (the Andor DU920P is 16-bit and counts are accumulated), **or** ≥ 3 consecutive identical samples at the spectrum maximum (flat top). Either condition sets the bit.
 
 **Partial grids.** `grid.allow_partial` (manifest, default false; CLI `--allow-partial-grid`). When true, missing positions are recorded in `grid_mask` (bool `[nz, ny, nx]`) and `n_spectra` is the number of files found. Duplicates and files outside the grid are always errors.
@@ -154,6 +190,21 @@ Zarr v3, sharded, flat layout (spectra as rows). Pin `zarr>=3.0,<4`.
 Float32 is exact for integer counts < 2²⁴ (16.7 M); ingest asserts no count exceeds this.
 
 **`dataset_id`** = `<scan>-<first 10 hex of BLAKE3(intensity bytes ‖ wavenumber bytes ‖ sorted source_file list)>`, computed **from the written arrays**, not from the raw files. Ingest is idempotent: an existing id → log and skip (exit 3). Raw files are not copied; `--archive` tars them to `archive_root` on Sherlock.
+
+`content_hash` is the full BLAKE3 hex digest (64 characters) of `intensity` as little-endian float32 bytes in C order, then `wavenumber` as little-endian float64 bytes, then the sorted `source_file` values joined with `\n` and UTF-8 encoded. `source_file` holds basenames, not paths, so the hash does not depend on where the raw files were. `dataset_id = f"{scan}-{content_hash[:10]}"`. The same digest is `dataset_hash` in `run_plan.json` and `content_hash` in the catalog.
+
+**DatasetManifest** (the `manifest` attr, and `dataset.manifest_json` in the catalog) is ScanInfo plus identity and provenance:
+```python
+class DatasetManifest(ScanInfo):
+    schema_version: str = "1.0"
+    dataset_id: str
+    sample: str | None           # --sample
+    n_spectra: int               # files found; >= 1, and == nx·ny·nz unless grid.allow_partial
+    filename_pattern: FilenamePattern = FilenamePattern()   # .regex defaults to FILENAME_RE
+    content_hash: str
+    created_at: AwareDatetime    # pipeline-generated, written in UTC; naive values rejected
+```
+The top-level `content_hash` and `created_at` attrs repeat the manifest's values, and the reader checks that they agree.
 
 ## 5. Priors recipe: `priors.yaml`
 
@@ -206,8 +257,8 @@ Every hyperparameter is either a literal or a named rule defined in `domain/prio
 4. Windows must not overlap unless both set `allow_overlap: true`.
 5. Overlapping center bounds inside one window → warning unless `ordered: true`.
 6. `end_members[*].peaks` reference existing peak ids; each peak in at most one end member.
-7. `preprocessing.margin_cm1 ≥ 0`; `despike.kernel` odd.
-8. At plan time: each window (without margin) covers ≥ 32 channels on the dataset axis; window ∪ margin lies within the axis.
+7. `preprocessing.margin_cm1 ≥ 0`; `despike.kernel` odd; when `smoothing` is set, `smoothing.window` is odd and ≥ 3 and `0 ≤ smoothing.polyorder < smoothing.window`.
+8. At plan time: each window (without margin) covers ≥ 32 channels on the dataset axis; window ∪ margin lies within the axis; when `smoothing` is set, window ∪ margin covers ≥ `smoothing.window` channels.
 9. `priors_hash = sha256(canonical_json(parsed_model))`.
 
 **Legacy CSV I/O.** `raman priors import-csv FILE --window-id W --range LO HI` → YAML fragment. Strip UTF-8 BOM (`nmc_lithiation.csv` has one), accept LF/CRLF, map `x (center)`→`center.mean`, limits→bounds. `export-csv` writes header `,x (center),x (lower limit),x (upper limit),FWHM (lower limit),FWHM (upper limit)` with LF, no BOM. Round-trip test on both committed CSVs.
@@ -277,16 +328,55 @@ Engines are discovered via the `raman_bayes.engines` entry-point group.
 ## 7. Orchestration
 
 ### 7.1 Chunking and plan
-`raman plan` writes `runs/<run_id>/run_plan.json` (frozen, hashed): dataset_id, dataset_hash, priors_hash, engine + config, preprocessing, profile, resolved config, seed, tasks `[{task_index, spec_start, spec_stop}]`. Boundaries are multiples of 1024 except the last. `spectra_per_task` defaults from a 20-fit benchmark targeting `target_task_minutes`; `--spectra-per-task` overrides (needed for the mock). Cap at `max_array_tasks`. `run_id` = UUIDv7. Catalog row created with status `planned`.
+`raman plan` builds a **RunConfig** from its flags and the resolved settings (§9) and turns it into a **RunPlan**. It applies §5 rule 8 against the dataset axis (exit 2 on failure), writes `runs/<run_id>/run_plan.json` (frozen) and creates the catalog `run` row with status `planned` plus one `task` row per task (`pending`, 0 attempts).
+
+```python
+class RunConfig:                 # the request, before resolution
+    dataset_id: str
+    priors_path: Path
+    engine: str                  # --engine, else the profile's engine.name
+    spectra_per_task: int | None = None   # >= 1; --spectra-per-task
+    seed: int | None = None      # 0 <= seed < 2**63; None -> secrets.randbits(63) at plan time
+    profile: str                 # --profile / RAMAN_PROFILE as given (name or path)
+
+class RunPlan:                   # run_plan.json
+    schema_version: str = "1.0"
+    run_id: str                  # UUIDv7, lowercase hyphenated form
+    created_at: AwareDatetime    # UTC
+    dataset_id: str
+    dataset_hash: str            # manifest.content_hash (§4)
+    dataset_uri: str             # absolute path of <dataset_id>.zarr
+    n_spectra: int               # >= 1
+    priors: PriorsSpec           # the full recipe, preprocessing included
+    priors_hash: str             # must equal the §5 rule 9 hash of priors; checked on load
+    engine: str
+    engine_version: str
+    engine_config: dict[str, JsonValue]   # EngineConfig fields: n_iter, burn_in, thin, options
+    backend: Literal["local", "slurm_array"]
+    profile: str
+    resolved_config: dict[str, JsonValue] # §9
+    seed: int                    # 0 <= seed < 2**63, so it fits the catalog's INTEGER column
+    spectra_per_task: int        # >= 1
+    tasks: tuple[TaskSpec, ...]  # TaskSpec(task_index, spec_start, spec_stop), stop exclusive
+```
+Preprocessing is `priors.preprocessing`; there is no separate field. `run-task` reads only `run_plan.json` and the Zarr store, never the catalog, the profile or the priors file. It exits 4 if the installed engine's version differs from `engine_version`.
+
+**Tasks.** With `s = spectra_per_task`, task k covers spectra `[k·s, min((k+1)·s, n_spectra))`. RunPlan rejects tasks that are not this contiguous, ordered partition of `0..n_spectra`. `--spectra-per-task` is used as given (the fixture tests use 8, 16 and 1024). Otherwise `s` is derived and rounded up to a multiple of 1024 (one Zarr chunk), so boundaries are multiples of 1024 except the last. On `slurm_array`, `s` comes from a 20-fit benchmark targeting `slurm.target_task_minutes` (Phase 2); on `local` it is `ceil(n_spectra / local.workers)`. A derived `s` is raised until the plan has at most `slurm.max_array_tasks` tasks; an explicit `s` that would exceed the cap is refused (exit 2). `local` has no cap. `run_id` is a UUIDv7 (RFC 9562), implemented in-package until the minimum Python has `uuid.uuid7` (3.14).
 
 ### 7.2 `raman run-task --run RUN --task N`
 The single entry point every backend executes.
 1. Acquire `shards/task=N/_LOCK` (JSON: host, pid, started_at; `O_EXCL` create). If present and younger than `lock_stale_minutes` (default 30), exit 3 "already running". If stale, overwrite.
 2. Load the task's slice of the Zarr.
 3. For each window: **clip to `range ± margin_cm1` → despike → baseline → smoothing → clamp → trim margin → noise_sd = MAD(residual of a 9-point median filter)**. Spectra with `nan_or_inf` or `saturated` flags get `status="skipped_qc"` without fitting.
-4. `fit_many` in sub-batches of 512; each sub-batch written as `part-<k>.parquet` via write `.tmp` → `fsync` → `os.replace`. Existing valid parts are skipped on restart (resume).
+4. `fit_many` in sub-batches of 512 spectra. Sub-batch `k` (zero-padded to 3 digits) is written as two files, `fits-<k>.parquet` (FITS_SCHEMA) and then `peaks-<k>.parquet` (PEAKS_SCHEMA), each via write `.tmp` → `fsync` → `os.replace`. A sub-batch is valid only when both files exist, read back with their explicit schemas and hold the expected rows: one fits row per spectrum × window, one peaks row per spectrum × window × peak. Otherwise both files are rewritten. Existing valid sub-batches are skipped on restart (resume).
 5. Write `_DONE.json` (counts, shard hash, host, Slurm ids, versions), remove `_LOCK`.
 Per-spectrum exceptions become `status="failed"` rows with the message. Non-zero exit means infrastructure failure. Never touches the catalog. Logs to `runs/<id>/logs/task-N.log`.
+
+**Smoothing** is optional; `smoothing: null` (as in the §5 example) skips the step. When set:
+```yaml
+smoothing: {method: savgol, window: 11, polyorder: 3}
+```
+`SmoothingSpec` (`domain/priors.py`) has exactly these three keys. `method` is `savgol`, the only method in v1. `window` counts **channels**, not cm⁻¹, because the axis is not evenly spaced in cm⁻¹ (1.72–2.19 cm⁻¹ per channel in the samples). The step is `scipy.signal.savgol_filter(y, window, polyorder, deriv=0, mode="interp")`, applied after baseline subtraction to the clipped segment (window ± margin), so edge effects fall in the margin that trim removes. §5 rules 7 and 8 bound `window` and `polyorder`.
 
 ### 7.3 Backends
 ```python
@@ -322,9 +412,61 @@ exec {{ pixi_bin }} run raman run-task --run {{ run_id }} --task "$SLURM_ARRAY_T
 ```
 planned ──submit──► submitted ──first task starts──► running ──all _DONE──► complete ──collect──► collected
    │                    │                                 │
-   └──cancel──► cancelled ◄───────────────────────────────┘        any ──► failed (max attempts exhausted)
+   └──cancel──► cancelled ◄───────────────────────────────┘        submitted/running ──► failed (stopped, a task not done)
 ```
 `collect` refuses unless status is `complete`, or `--partial` is given (then results carry `partial: true` in the manifest). `submit` refuses unless `planned` or (with `--resubmit-failed`) `running`/`failed`.
+
+The legal transitions are exactly these; `catalog.py` raises on any other, including a transition to the same status.
+
+| From | To | When |
+|---|---|---|
+| planned | submitted | `submit` |
+| submitted | running | a task is seen running or done |
+| running | complete | every task has `_DONE.json` |
+| submitted, running | failed | no task is pending or running, and at least one has no `_DONE.json` |
+| failed | submitted | `submit --resubmit-failed` |
+| complete | collected | `collect` |
+| planned, submitted, running, failed | cancelled | `cancel` |
+
+The CLI driver refreshes a run by merging `poll` into the `task` rows and then applying these transitions in order, possibly several in one refresh (submitted → running → complete). `submit --resubmit-failed` on a `running` run resubmits without changing the run status. It resubmits only tasks with no `_DONE.json` and refuses (exit 2) a task that has used its 3 attempts. `collect --partial` changes no status. `collected` and `cancelled` are terminal.
+
+**Task states.** `poll` returns one `TaskState` per task index:
+```python
+class TaskStatus(StrEnum):       # catalog task.status
+    PENDING        # not started: no _LOCK, no _DONE.json
+    RUNNING        # fresh _LOCK, or sacct RUNNING
+    DONE           # _DONE.json present; the source of truth, wins over sacct
+    FAILED         # run-task exited non-zero, or a stale _LOCK with no _DONE.json
+    TIMEOUT; OUT_OF_MEMORY; PREEMPTED   # sacct states (Phase 2)
+    CANCELLED      # cancelled before _DONE.json
+    UNKNOWN        # no marker and no backend record
+
+class TaskState:
+    status: TaskStatus
+    attempts: int                # >= 0; submissions of this task so far, 0 while planned
+    slurm_job_id: str | None     # "<array_id>_<index>"; None on local
+    has_done_marker: bool        # True exactly when status is DONE
+    n_ok: int | None             # from _DONE.json: fits.parquet rows with status "ok"
+    n_failed: int | None         # ... with status "failed"; both None unless DONE
+    error: str | None            # last infrastructure error (exit code, sacct state, message)
+```
+`skipped_qc` rows count in neither `n_ok` nor `n_failed`; `n_skipped_qc` in `run_manifest.json` is counted from `fits.parquet` at collect. The `TaskState` fields other than `has_done_marker` are the §8.5 `task` columns; `spec_start` and `spec_stop` come from the plan.
+
+**Submissions.** `submit` and `resubmit` return a `SubmissionRecord`:
+```python
+class SubmissionRecord:
+    schema_version: str = "1.0"
+    run_id: str
+    attempt: int                 # 1 for the first submit, +1 per resubmit
+    backend: Literal["local", "slurm_array"]
+    submitted_at: AwareDatetime  # UTC
+    host: str
+    dry_run: bool
+    task_indices: tuple[int, ...]        # non-empty, strictly increasing
+    slurm_array_job_id: str | None       # set exactly when backend is slurm_array and not dry_run
+    script: str | None                   # rendered sbatch on slurm_array; None on local
+```
+`runs/<run_id>/submission.json` is a JSON array of the non-dry-run records in attempt order. The CLI driver appends to it (write `.tmp`, then `os.replace`). A dry run returns its record for display, writes nothing and changes no status.
 
 ### 7.5 Sherlock facts baked into `sherlock.yaml`
 Partitions `normal,owners`; `normal` max 2 days; `owners` jobs can be preempted and requeued. `plan` queries `scontrol show config | grep MaxArraySize` and `sacctmgr show qos normal format=MaxSubmitJobsPerUser -P` live and refuses plans exceeding them. `$SCRATCH` purges files untouched for 90 days → `collect` copies results to `archive_root`, `doctor` warns about datasets older than 60 days.
@@ -335,7 +477,7 @@ Partitions `normal,owners`; `normal` max 2 days; `owners` jobs can be preempted 
 ```
 runs/<run_id>/
   run_plan.json  submission.json  logs/
-  shards/task=00000/_LOCK | part-000.parquet … _DONE.json
+  shards/task=00000/_LOCK | fits-000.parquet  peaks-000.parquet … _DONE.json
   results/peaks.parquet  fits.parquet  run_manifest.json
 ```
 
@@ -363,13 +505,16 @@ run(run_id PK, dataset_id, priors_hash, engine, engine_version, config_hash, git
 task(run_id, task_index, spec_start, spec_stop, status, attempts, slurm_job_id, n_ok, n_failed, error,
      PRIMARY KEY(run_id, task_index))
 ```
+`run.status` holds a `RunStatus` value and `task.status` a `TaskStatus` value (§7.4). `plan` creates the `task` rows; after that only a refresh from `poll` updates them.
 Rollback journal (not WAL) on Sherlock. `raman runs import DIR` registers a run folder copied from elsewhere.
 
 ## 9. Configuration
 
 Pydantic Settings. Precedence: defaults < profile YAML < `RAMAN_*` env < CLI flags. `--profile` (or `RAMAN_PROFILE`) is a **name** or a **path**. A name resolves first to the packaged `raman_bayes/config/profiles/<name>.yaml`, then to `./configs/profiles/<name>.yaml`; a path is used as given. Default is `local`. Resolved config is frozen into `run_plan.json`.
 
-**`${VAR}` expansion:** only `${NAME}` syntax, expanded at load time; an unset variable is a hard error naming the variable and the profile key. Sherlock sets `SCRATCH` and `GROUP_HOME`; **Oak is not an environment variable**, so `archive_root` is a literal path you fill in.
+Profiles are validated strictly: an unknown key is an error naming it. A `RAMAN_*` variable names a settings key in upper case, with `__` between levels (`RAMAN_LOCAL__WORKERS=4`, `RAMAN_PATHS__RUNS_ROOT=/tmp/runs`); `RAMAN_PROFILE` selects the profile. Relative `paths.*` values resolve against the working directory at load time. `resolved_config` in `run_plan.json` is the settings model dumped to JSON after precedence and `${VAR}` expansion, with every path absolute, plus a `profile_source` key (`package:<name>.yaml` or the absolute file path).
+
+**`${VAR}` expansion:** only `${NAME}` syntax, expanded at load time, in profile values only (`RAMAN_*` values are used literally); an unset variable is a hard error naming the variable and the profile key. Sherlock sets `SCRATCH` and `GROUP_HOME`; **Oak is not an environment variable**, so `archive_root` is a literal path you fill in.
 
 ```yaml
 # raman_bayes/config/profiles/local.yaml  (packaged default; laptop)
@@ -502,6 +647,7 @@ For each sub-step: failing tests first, then implementation; stop with a five-li
 
 ## 16. Review log
 
+- v0.5 → v0.6: Phase 1 models finalized: ScanInfo and DatasetManifest (§3, §4), SmoothingSpec (§5, §7.2), RunConfig, RunPlan and settings details (§7.1, §9), TaskState, SubmissionRecord and the explicit transition table (§7.4, §8.5); shards are two files per sub-batch, fits before peaks (§7.2, §8.1).
 - v0.4 → v0.5: §11 asserts n_accum per file (1, 5, 5, 5, 10), confirmed against the raw Info.txt files; §3 Info.txt layout corrected from the real files; §5 rule 8 is plan-time (unchanged, clarified in Phase 1 plan).
 
 ### v0.3 → v0.4 (packaging)
