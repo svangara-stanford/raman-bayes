@@ -1,4 +1,4 @@
-# raman-bayes — Design Brief (v0.4, adversarially reviewed)
+# raman-bayes — Design Brief (v0.5, 2026-10-29, adversarially reviewed)
 
 **Status:** approved for Phase 0–2 implementation. The package is a plain PyPI wheel (§2 Packaging). Engine, GUI, MCP, LLM helpers, Globus commands and derived quantities are out of scope. §16 records what was reviewed and why.
 
@@ -106,7 +106,7 @@ FILENAME_RE = r"^(?P<scan>.+?)-z(?P<iz>\d+)y(?P<iy>\d+)x(?P<ix>\d+)\.txt$"
 Stored in the manifest as `filename_pattern.regex` with this default.
 
 **`<scan>-Info.txt` is section-structured and internally inconsistent.** Keys like `Axis scan start` repeat once per axis, and in `NMC811_v0-Info.txt` the `Frame Dimentions` block says Z has 1 point at 42.68 µm while the `Frame Stage / Axis : 3` block says Z has 6 points from 75.06 to 79.05 µm. Only z0 files exist. Rules:
-1. Parse by section (`Frame Header`, `Frame Options`, `Frame Dimentions`, `Frame Stage/Axis : N`, `Scan detection channel information/Channel : N`).
+1. Parse by section (`Frame Header`, `Frame Options`, `Frame Dimentions`, `Frame Stage/Axis : N`, `Scan detection channel information/Channel : N`). Line 1 is the export timestamp and line 2 the title `Scan common information`; neither is a section. The `Frame …` headings end in `:`; `Scan detection channel information` does not, and its preamble (`Device Name : Andor CCD`, `Channels :1`) precedes the `Channel : 0` subsection, so `Channels :1` must not be read as a subsection. `Frame Stage` axes contain flag lines with no separator (`Axis is present`). Blank lines contain a single space. Separators vary (`Date: `, `Scanned points X : `, `Axis scan start, [um]: `, `Head model = `, `Channels :1`).
 2. **`Frame Dimentions` is authoritative** for `nx, ny, nz` and the per-axis `start/stop/step [um]`. Its order is X, Y, Z. When an axis has 1 point, `Axis position, [um]` is its coordinate and step is 0.
 3. Cross-check `nx·ny·nz` against the number of spectrum files found. Mismatch is an error unless `grid.allow_partial: true`.
 4. Store the whole `Frame Stage` block raw under `manifest.instrument.raw_stage` for provenance; do not use it for coordinates.
@@ -123,6 +123,10 @@ Fields parsed into the manifest:
 | Dimentions `Spectral series number (maximum) :` | `n_series` (must be 1) |
 | Channel `Exposure time, [sec] =`, `Number in Accumulation =` | `acq.exposure_s`, `acq.n_accum` |
 | Channel `Temperature [grad C] =`, `Central Pixel =`, `Head model =` | `acq.ccd_temp_c`, `acq.central_pixel`, `acq.head_model` |
+
+`Exposure time, [sec] =` shares its line with `Cycle time [sec] =` (`Exposure time, [sec] = 0.2000 Cycle time [sec] = 0.2862`); the parser reads the number immediately after `Exposure time, [sec] =`, not the remainder of the line. Cycle time is not stored.
+
+`Number in Accumulation =` follows `Acquisition mode: Accomulate.` on the same line (`Acquisition mode: Accomulate. Number in Accumulation = 5`); the parser finds the key within the line rather than splitting on the first separator. `n_accum` differs per scan (1, 5 or 10 in the samples) and must be read from each file, never assumed.
 
 Coordinates: `x_um = grid.x.start_um + ix * grid.x.step_um` (same for y, z). Store both indices and µm.
 
@@ -425,7 +429,7 @@ Exit codes: 0 ok · 2 validation · 3 nothing to do / already running · 4 backe
 **Fixtures.** `tests/fixtures/nanofinder_mini/NMC811_v0/` = the real `NMC811_v0-Info.txt` + files for iz=0, iy∈0..4, ix∈0..4 (25 spectra), carved by `scripts/make_fixture.py`; ingested with `allow_partial`. `tests/fixtures/info_txt/` = all five real Info.txt files. `tests/fixtures/legacy_output/` = an old counts CSV from the previous pipeline **if one can be found**; otherwise the legacy header is compared to a committed string.
 
 **Unit.**
-- Info.txt parser on all five files: correct `nx, ny, nz` (50×25×1 and 50×50×1), `Frame Dimentions` wins over `Frame Stage` for Z, `n_accum=5`, `n_series=1`; a modified copy with `n_series=2` is refused.
+- Info.txt parser on all five files: correct `nx, ny, nz` (50×25×1 and 50×50×1), `Frame Dimentions` wins over `Frame Stage` for Z, `n_accum` per file (1, 5, 5, 5, 10 for NMC111_v1, NMC111_v2, NMC811_v0, NMC811_v1, NMC811_v2), `n_series=1`; a modified copy with `n_series=2` is refused.
 - Spectrum reader on NMC811 **and** NMC111 files (differing byte sizes), LF and CRLF, BOM-free; axis check tolerance.
 - Filename regex: valid, malformed, and a different-instrument override.
 - Grid completeness: one missing file, one duplicate, one out-of-grid file → three distinct errors; `allow_partial` turns the first into a mask.
@@ -497,6 +501,8 @@ For each sub-step: failing tests first, then implementation; stop with a five-li
 | 13 | Plain-pip installable: PyPI-wheel deps only; runtime files loaded via `importlib.resources`; `local.yaml` packaged, site profiles repo-level; wheel-install CI job. |
 
 ## 16. Review log
+
+- v0.4 → v0.5: §11 asserts n_accum per file (1, 5, 5, 5, 10), confirmed against the raw Info.txt files; §3 Info.txt layout corrected from the real files; §5 rule 8 is plan-time (unchanged, clarified in Phase 1 plan).
 
 ### v0.3 → v0.4 (packaging)
 - Decision 13. §2 Packaging paragraph and four import contracts written out; §9 profile-name resolution; §11 wheel-install job; §13 Phase 0 row. No change to architecture or data formats.
