@@ -42,4 +42,3 @@ This is a package for release. Write it as a senior engineer would review it.
 - No dead code, commented-out code, TODO without an issue reference, or unused parameters.
 - Public API is explicit: each public module lists `__all__`; anything not listed starts with `_`.
 - Before committing each sub-step, reread the diff once as a reviewer and remove what would not survive code review at a serious open-source project.
-
