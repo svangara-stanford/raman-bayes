@@ -31,3 +31,15 @@ Read docs/DESIGN.md before any work. It is authoritative; Section 15 decisions r
 - Phase 1 runs in three batches on one branch each: A = sub-steps 01–06 (`phase-1-01-foundation`), B = 07–10 (`phase-1-07-pipeline`), C = 11–15 (`phase-1-11-execution`). One commit per sub-step with its DEVLOG entry; push after every commit so CI runs on each; open one PR at the end of the batch with all five-line summaries in the body; stop.
 - Hard stops. Stop immediately, print the summaries so far, and wait, if any of these occur: a dependency not already approved (approved: blake3, pydantic-settings, jsonschema); any change to a Parquet schema, the CLI envelope, FILENAME_RE, or anything in DESIGN.md §15; a DESIGN.md patch that differs from the one I applied; CI red after two fix attempts on one sub-step; any test deleted, skipped, xfailed, or weakened to make it pass; a pixi.lock change beyond the approved dependencies.
 - Resume rule: after compaction or a new session, read CLAUDE.md, docs/DESIGN.md, docs/plans/phase-1-plan.md and the last DEVLOG entry, then continue from the next sub-step of the current batch.
+
+## Code standards
+This is a package for release. Write it as a senior engineer would review it.
+- A module does one thing and is named for it. No utils.py, helpers.py, common.py or misc.py.
+- Functions fit on a screen; more than five parameters means the arguments want to be a model. Prefer flat code to nested conditionals; return early.
+- Comments say why, never what. No docstring that restates the signature; public functions get a docstring that states the contract (inputs, output, errors raised). No "attempts to", "helper for", "this function".
+- Catch an exception only where you handle it, and name the exception. Never `except Exception`. Errors raised to the user are specific exception classes in domain/ or app/, with messages a user can act on.
+- Use what exists before writing it: numpy, scipy, pyarrow, pydantic, pathlib, itertools, functools. No hand-rolled versions of library functions.
+- No dead code, commented-out code, TODO without an issue reference, or unused parameters.
+- Public API is explicit: each public module lists `__all__`; anything not listed starts with `_`.
+- Before committing each sub-step, reread the diff once as a reviewer and remove what would not survive code review at a serious open-source project.
+
