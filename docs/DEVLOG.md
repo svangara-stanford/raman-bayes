@@ -81,3 +81,8 @@ Short, dated entries: what was done, what was decided, anything overridden. Newe
 - `configs/` added to the CLI tests' forbidden user-visible fragments, following the new CLAUDE.md rule.
 - Fixed the date of the first entry (Phase 0 scaffold): 2026-10-23 → 2026-10-22.
 - Short entry by agreement: Phase 0 decisions and gaps are already in each sub-step's entry.
+
+## 2026-10-28 — Phase 0 complete
+- §13 "done when" met: CI green on all six matrix cells plus pre-commit and wheel-install jobs (PR #9); local test/lint green; `raman --help` and `raman ingest x --json` (exit 3) verified by hand.
+- Branch protection enabled on main; CI required for merge from here on.
+- Phase 1 plan from Claude Code saved to docs/plans/phase-1-plan.md pending approval.
