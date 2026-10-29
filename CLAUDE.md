@@ -26,3 +26,8 @@ Read docs/DESIGN.md before any work. It is authoritative; Section 15 decisions r
 - data/raw/ holds the test archives (gitignored). Fixture: tests/fixtures/nanofinder_mini/. Unit tests use tests/fixtures/, never data/raw/.
 - Legacy priors CSVs: configs/priors/legacy/. Generate configs/priors/nmc_commercial.yaml from them (DESIGN.md §5).
 - Packaged default profile: src/raman_bayes/config/profiles/local.yaml. Site profiles (labpc, sherlock) live in configs/profiles/.
+
+## Batch mode (Phase 1)
+- Phase 1 runs in three batches on one branch each: A = sub-steps 01–06 (`phase-1-01-foundation`), B = 07–10 (`phase-1-07-pipeline`), C = 11–15 (`phase-1-11-execution`). One commit per sub-step with its DEVLOG entry; push after every commit so CI runs on each; open one PR at the end of the batch with all five-line summaries in the body; stop.
+- Hard stops. Stop immediately, print the summaries so far, and wait, if any of these occur: a dependency not already approved (approved: blake3, pydantic-settings, jsonschema); any change to a Parquet schema, the CLI envelope, FILENAME_RE, or anything in DESIGN.md §15; a DESIGN.md patch that differs from the one I applied; CI red after two fix attempts on one sub-step; any test deleted, skipped, xfailed, or weakened to make it pass; a pixi.lock change beyond the approved dependencies.
+- Resume rule: after compaction or a new session, read CLAUDE.md, docs/DESIGN.md, docs/plans/phase-1-plan.md and the last DEVLOG entry, then continue from the next sub-step of the current batch.
