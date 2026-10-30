@@ -1,0 +1,4 @@
+# Fixtures and legacy CSVs are verbatim instrument and lab files: CRLF line endings, a BOM and
+# single-space blank lines are what the readers must handle, so git never normalises them.
+tests/fixtures/** -text
+configs/priors/legacy/*.csv -text

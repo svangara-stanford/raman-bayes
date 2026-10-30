@@ -90,3 +90,10 @@ Short, dated entries: what was done, what was decided, anything overridden. Newe
 ## 2026-10-29 — Phase 1 batch A, chore: ruff D and TRY003
 - Branch `phase-1-01-foundation`. Fixed the 28 pydocstyle violations (contract docstrings on the flagged classes, Protocol methods and `gen_schemas.py` functions; `make_console` in imperative mood) and the TRY003 in `CliEnvelope`, now raised as `EnvelopeStatusError(ValueError)` so pydantic still reports it as a ValidationError. No ignores added.
 - Protocol method bodies are now the docstring alone; the `...` placeholders went with them.
+
+## 2026-10-29 — Phase 1 sub-step 01: fixtures and make_fixture script
+- Branch `phase-1-01-foundation`. Built `scripts/make_fixture.py` and committed `tests/fixtures/nanofinder_mini/NMC811_v0/` (real Info.txt + 25 corner spectra), `tests/fixtures/info_txt/` (the five Info.txt files) and `tests/fixtures/spectra/` (two NMC111_v1 spectra, 19920 and 19922 bytes); `.gitattributes` marks fixtures and legacy CSVs `-text`; pre-commit whitespace fixers exclude `tests/fixtures/`.
+- Deviation (plan §4.1, recorded as planned): `tests/fixtures/spectra/` is beyond the §2 fixture layout, because §11 wants NMC111 reader tests and the mini fixture is NMC811 only.
+- The two NMC111 files are named constants (`z0y0x0`, `z0y11x0`) rather than picked by size at run time, so the fixture is reviewable and stable.
+- The script checks every source and every destination before writing, so a missing source or an unforced conflict writes nothing. Identical destinations are skipped (no mtime change).
+- Data findings from the plan stand: `n_accum` 1/5/5/5/10; NMC111 Info.txt is 102 lines (no `Center Row`/`Track Height`), NMC811 is 104; 7 single-space blank lines per file.

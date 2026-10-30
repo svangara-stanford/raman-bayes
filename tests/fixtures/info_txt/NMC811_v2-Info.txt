@@ -1,0 +1,104 @@
+6/9/2026 1:06:34 PM
+Scan common information
+Frame Header:
+Date: 5/29/2026
+Time Start: 1:09:17 PM
+Time End: 3:16:57 PM
+System name: TII Nanofinder
+Positioner name: XYZ NI-DACmx
+Detector name: Andor CCD
+Function name: Not specified
+ 
+Frame Options:
+Scan Mode: Normal scan mode
+Measuring mode: Measure in point
+Scanning move: Raster mode
+ 
+Frame Dimentions:
+Spectral size (number of pixels) : 1024
+Spectral series number (maximum) : 1
+Detector channels (total) : 1
+Scanned points X : 50
+Axis scan start, [um]: 28.5139
+Axis scan stop, [um]: 77.5378
+Axis scan step, [um]: 1.0005
+Scanned points Y : 50
+Axis scan start, [um]: 26.9586
+Axis scan stop, [um]: 75.9387
+Axis scan step, [um]: 0.9996
+Scanned points Z : 1
+Axis position, [um]: 43.8879
+Total data size [KB] : 10000
+ 
+Frame Stage:
+Axis : 1
+Axis is present
+Axis in use
+Axis not inversed
+Axis bias : 0
+Axis scale : 0.00153449003119022
+Axis minimum : 0
+Axis maximum : 100.562804194051
+Axis scan start : 28.5138937595766
+Axis scan stop : 77.5377812760416
+Axis scan step : 1.00048750033602
+Axis scan points : 50
+Axis name : X
+Axis unit : um
+Axis maker : XYZ NI-DACmx
+Axis is fast
+ 
+Axis : 2
+Axis is present
+Axis in use
+Axis not inversed
+Axis bias : 0
+Axis scale : 0.00152609997894615
+Axis minimum : 0
+Axis maximum : 100.012962120236
+Axis scan start : 26.9585561280837
+Axis scan stop : 75.9387349523604
+Axis scan step : 0.999595486209728
+Axis scan points : 50
+Axis name : Y
+Axis unit : um
+Axis maker : XYZ NI-DACmx
+Axis is fast
+ 
+Axis : 3
+Axis is present
+Axis not in use
+Axis not inversed
+Axis bias : 0
+Axis scale : 0.00153449003119022
+Axis minimum : 0
+Axis maximum : 100.562804194051
+Axis scan start : 75.0565108956071
+Axis scan stop : 79.0538574268576
+Axis scan step : 0.799469306250103
+Axis scan points : 6
+Axis name : Z
+Axis unit : um
+Axis maker : XYZ NI-DACmx
+Axis is fast
+ 
+Scan detection channel information
+Device Name : Andor CCD
+Channels :1
+ 
+Channel : 0
+Head model = DU920P_BEX2D
+CCD Width (pixels) = 1024
+CCD Height (pixels) = 256
+Central Pixel = 505
+Pixel Size [um] = 26.00
+Calibration type: Nanofinder Calibration
+Acquisition mode: Accomulate. Number in Accumulation = 10
+Readout Mode: Single Track
+Exposure time, [sec] = 0.2000 Cycle time [sec] = 0.2862
+Shift speed [usec] = [1.70]
+Temperature [grad C] = -69.00
+Readout Rate [MHz] = 0.05
+Horizontal binning = 1
+Center Row = 136
+Track Height = 15
