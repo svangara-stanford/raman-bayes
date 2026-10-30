@@ -53,16 +53,22 @@ def _stub(command: str, as_json: bool) -> NoReturn:
 
 
 class ExportFormat(StrEnum):
+    """``export --format`` choices."""
+
     LEGACY_CSV = "legacy-csv"
     CSV = "csv"
 
 
 class HeightSource(StrEnum):
+    """Posterior written in the legacy CSV 'height' column."""
+
     AREA = "area"
     HEIGHT = "height"
 
 
 class Coords(StrEnum):
+    """Coordinates written in the legacy CSV: grid indices or micrometres."""
+
     INDEX = "index"
     UM = "um"
 

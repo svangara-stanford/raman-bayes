@@ -86,3 +86,7 @@ Short, dated entries: what was done, what was decided, anything overridden. Newe
 - §13 "done when" met: CI green on all six matrix cells plus pre-commit and wheel-install jobs (PR #9); local test/lint green; `raman --help` and `raman ingest x --json` (exit 3) verified by hand.
 - Branch protection enabled on main; CI required for merge from here on.
 - Phase 1 plan from Claude Code saved to docs/plans/phase-1-plan.md pending approval.
+
+## 2026-10-29 — Phase 1 batch A, chore: ruff D and TRY003
+- Branch `phase-1-01-foundation`. Fixed the 28 pydocstyle violations (contract docstrings on the flagged classes, Protocol methods and `gen_schemas.py` functions; `make_console` in imperative mood) and the TRY003 in `CliEnvelope`, now raised as `EnvelopeStatusError(ValueError)` so pydantic still reports it as a ValidationError. No ignores added.
+- Protocol method bodies are now the docstring alone; the `...` placeholders went with them.

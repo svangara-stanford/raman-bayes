@@ -69,6 +69,8 @@ class AcquisitionInfo(DomainModel):
 
 
 class FilenamePattern(DomainModel):
+    """The spectrum filename grammar; ``regex`` needs groups ``scan``, ``iz``, ``iy``, ``ix``."""
+
     regex: str = FILENAME_RE
 
 

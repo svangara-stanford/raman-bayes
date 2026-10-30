@@ -25,11 +25,15 @@ class SpecMeta(DomainModel):
 
 
 class PresenceDefault(DomainModel):
+    """Default presence prior: each peak is present with probability ``p``."""
+
     prior: Literal["bernoulli"]
     p: float
 
 
 class CenterDefault(DomainModel):
+    """Default center prior family and the named rule that sets its sd."""
+
     prior: Literal["normal_truncated"]
     sd_rule: SdRule
 
@@ -41,6 +45,8 @@ class FwhmDefault(DomainModel):
 
 
 class LikelihoodSpec(DomainModel):
+    """Observation model; ``nu`` is the Student-t degrees of freedom."""
+
     model: Literal["student_t"]
     nu: float
 
@@ -56,12 +62,16 @@ class Defaults(DomainModel):
 
 
 class DespikeSpec(DomainModel):
+    """Median/MAD despiking: ``kernel`` channels wide, spikes above ``thresh`` MADs."""
+
     method: Literal["median_mad"]
     kernel: int
     thresh: float
 
 
 class BaselineSpec(DomainModel):
+    """Asymmetric least-squares baseline with smoothness ``lam`` and asymmetry ``p``."""
+
     method: Literal["als"]
     lam: float
     p: float
@@ -86,22 +96,30 @@ class PreprocessingSpec(DomainModel):
 
 
 class EndMember(DomainModel):
+    """A named group of peaks attributed to one material."""
+
     id: str
     label: str | None = None
     peaks: tuple[str, ...]
 
 
 class CenterPrior(DomainModel):
+    """A peak's center prior in cm^-1; ``sd`` overrides the default ``sd_rule``."""
+
     mean: float
     bounds: Bounds
     sd: float | None = None
 
 
 class FwhmPrior(DomainModel):
+    """A peak's FWHM bounds in cm^-1."""
+
     bounds: Bounds
 
 
 class Peak(DomainModel):
+    """One peak of a window: its id, display label and priors."""
+
     id: str
     label: str | None = None
     center: CenterPrior
@@ -109,6 +127,8 @@ class Peak(DomainModel):
 
 
 class Window(DomainModel):
+    """A spectral range fitted independently, with the peaks it contains."""
+
     id: str
     range_cm1: Bounds
     peaks: tuple[Peak, ...]

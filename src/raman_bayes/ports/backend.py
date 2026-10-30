@@ -12,12 +12,18 @@ from raman_bayes.domain.run import RunPlan, SubmissionRecord, TaskState
 
 @runtime_checkable
 class ExecutionBackend(Protocol):
+    """Runs the tasks of a RunPlan somewhere and reports their state."""
+
     name: str
 
-    def submit(self, plan: RunPlan, *, dry_run: bool = False) -> SubmissionRecord: ...
+    def submit(self, plan: RunPlan, *, dry_run: bool = False) -> SubmissionRecord:
+        """Start every task of ``plan``; with ``dry_run``, start nothing and write nothing."""
 
-    def poll(self, run_id: str) -> Mapping[int, TaskState]: ...
+    def poll(self, run_id: str) -> Mapping[int, TaskState]:
+        """Return one TaskState per task index of ``run_id``."""
 
-    def cancel(self, run_id: str, tasks: Sequence[int] | None = None) -> None: ...
+    def cancel(self, run_id: str, tasks: Sequence[int] | None = None) -> None:
+        """Stop ``tasks`` of ``run_id``, or every task when ``tasks`` is None."""
 
-    def resubmit(self, run_id: str, tasks: Sequence[int]) -> SubmissionRecord: ...
+    def resubmit(self, run_id: str, tasks: Sequence[int]) -> SubmissionRecord:
+        """Start ``tasks`` of ``run_id`` again and return the new attempt's record."""

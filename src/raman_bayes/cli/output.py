@@ -24,6 +24,13 @@ class ExitCode(IntEnum):
     BACKEND = 4  # backend or infrastructure failure
 
 
+class EnvelopeStatusError(ValueError):
+    """An envelope's ``ok`` disagrees with its ``exit_code``."""
+
+    def __init__(self, ok: bool, exit_code: ExitCode) -> None:
+        super().__init__(f"ok={ok} contradicts exit_code={int(exit_code)}")
+
+
 class CliEnvelope(BaseModel):
     """The single JSON object a command writes to stdout under ``--json`` (provisional)."""
 
@@ -41,7 +48,7 @@ class CliEnvelope(BaseModel):
     @model_validator(mode="after")
     def _ok_matches_exit_code(self) -> Self:
         if self.ok != (self.exit_code is ExitCode.OK):
-            raise ValueError(f"ok={self.ok} contradicts exit_code={int(self.exit_code)}")
+            raise EnvelopeStatusError(self.ok, self.exit_code)
         return self
 
 
@@ -54,7 +61,7 @@ _STYLE = {
 
 
 def make_console(stream: TextIO) -> Console:
-    """A Rich console that emits ANSI only when ``stream`` is a TTY, whatever FORCE_COLOR says."""
+    """Return a Rich console that emits ANSI only when ``stream`` is a TTY, despite FORCE_COLOR."""
     return Console(file=stream, force_terminal=stream.isatty(), highlight=False)
 
 
