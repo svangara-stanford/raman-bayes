@@ -11,10 +11,12 @@ from pathlib import Path
 from pydantic import ValidationError
 
 __all__ = [
+    "CatalogError",
     "ConfigError",
     "FilenamePatternError",
     "FilenamePatternGroupsError",
     "FilenamePatternSyntaxError",
+    "IllegalTransitionError",
     "InfoFileError",
     "InfoFilenameError",
     "InfoValueError",
@@ -32,9 +34,13 @@ __all__ = [
     "SpectrumFileError",
     "SpectrumLineError",
     "SpectrumRowCountError",
+    "StaleStatusError",
     "TimeSeriesNotSupportedError",
     "UnknownProfileError",
+    "UnknownRunError",
+    "UnknownTaskError",
     "UnsetVariableError",
+    "UnsupportedCatalogError",
 ]
 
 
@@ -216,3 +222,47 @@ class InvalidProfileError(ConfigError):
 
     def __init__(self, source: str, problems: Sequence[str]) -> None:
         super().__init__(f"{source}: {'; '.join(problems)}")
+
+
+# ---------------------------------------------------------------- catalog
+
+
+class CatalogError(RamanBayesError):
+    """The catalog refused an operation or cannot be used."""
+
+
+class UnsupportedCatalogError(CatalogError):
+    """The catalog file was written by an incompatible version of raman-bayes."""
+
+    def __init__(self, path: Path, version: int, supported: int) -> None:
+        super().__init__(
+            f"{path}: catalog schema version {version}, but this raman-bayes reads {supported}"
+        )
+
+
+class IllegalTransitionError(CatalogError):
+    """A run status change that the run lifecycle does not allow."""
+
+    def __init__(self, run_id: str, current: str, requested: str) -> None:
+        super().__init__(f"run {run_id}: cannot go from {current} to {requested}")
+
+
+class StaleStatusError(CatalogError):
+    """The run's status changed since the caller read it."""
+
+    def __init__(self, run_id: str, expected: str, actual: str) -> None:
+        super().__init__(f"run {run_id}: expected status {expected}, but it is {actual}")
+
+
+class UnknownRunError(CatalogError):
+    """No run with this id is in the catalog."""
+
+    def __init__(self, run_id: str) -> None:
+        super().__init__(f"no run {run_id!r} in the catalog")
+
+
+class UnknownTaskError(CatalogError):
+    """The run has no task with this index."""
+
+    def __init__(self, run_id: str, task_index: int) -> None:
+        super().__init__(f"run {run_id} has no task {task_index}")

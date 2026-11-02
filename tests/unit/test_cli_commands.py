@@ -48,7 +48,15 @@ COMMANDS: dict[str, list[str]] = {
 }
 NAMES = list(COMMANDS)
 # Commands built so far; each one has its own test module.
-IMPLEMENTED = {"validate-priors", "priors import-csv", "priors export-csv"}
+IMPLEMENTED = {
+    "validate-priors",
+    "priors import-csv",
+    "priors export-csv",
+    "datasets list",
+    "datasets show",
+    "runs list",
+    "runs show",
+}
 STUBS = [name for name in NAMES if name not in IMPLEMENTED]
 
 runner = CliRunner()
