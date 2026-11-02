@@ -24,6 +24,7 @@ dependencies = [
     "pyarrow>=15",
     "zarr>=3.0,<4",
     "pydantic>=2.6,<3",
+    "pydantic-settings>=2.16.2,<3",
     "typer>=0.12",
     "rich>=13",
     "pyyaml>=6",
@@ -86,6 +87,9 @@ convention = "numpy"
 "tests/unit/test_ports.py" = ["ARG002"]
 "tests/unit/typing_checks_ports.py" = ["ARG002"]
 "scripts/**" = ["T20"]
+# pydantic-settings calls Settings.settings_customise_sources with these keyword arguments, so
+# the hook must accept them even though it uses only init_settings.
+"src/raman_bayes/config/settings.py" = ["ARG003"]
 "src/raman_bayes/cli/main.py" = [
     # Typer turns each command-line option into one function parameter, so a command's arity
     # is its option count (DESIGN.md §10) and cannot be grouped into a model.

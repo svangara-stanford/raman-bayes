@@ -67,7 +67,7 @@ def _invalid(
 
 
 def _finish(envelope: CliEnvelope, as_json: bool) -> NoReturn:
-    emit(envelope, as_json=as_json, warnings_to_stderr=True)
+    emit(envelope, as_json=as_json)
     raise typer.Exit(code=envelope.exit_code)
 
 

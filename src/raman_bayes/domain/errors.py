@@ -11,6 +11,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 __all__ = [
+    "ConfigError",
     "FilenamePatternError",
     "FilenamePatternGroupsError",
     "FilenamePatternSyntaxError",
@@ -18,10 +19,12 @@ __all__ = [
     "InfoFilenameError",
     "InfoValueError",
     "InputError",
+    "InvalidProfileError",
     "InvalidScanInfoError",
     "LegacyCsvError",
     "LegacyCsvHeaderError",
     "LegacyCsvRowError",
+    "MalformedVariableError",
     "MissingInfoKeyError",
     "MissingInfoSectionError",
     "NegativeDurationError",
@@ -30,6 +33,8 @@ __all__ = [
     "SpectrumLineError",
     "SpectrumRowCountError",
     "TimeSeriesNotSupportedError",
+    "UnknownProfileError",
+    "UnsetVariableError",
 ]
 
 
@@ -174,3 +179,40 @@ class LegacyCsvRowError(LegacyCsvError):
     def __init__(self, path: Path, line_number: int, problem: str) -> None:
         self.line_number = line_number
         super().__init__(f"{path}, line {line_number}: {problem}")
+
+
+# ---------------------------------------------------------------- settings and profiles
+
+
+class ConfigError(InputError):
+    """A profile cannot be found, expanded or validated."""
+
+
+class UnknownProfileError(ConfigError):
+    """No profile file exists for the given name or path."""
+
+    def __init__(self, profile: str, searched: Sequence[str]) -> None:
+        super().__init__(f"profile {profile!r} not found; looked in: {'; '.join(searched)}")
+
+
+class UnsetVariableError(ConfigError):
+    """A profile value names an environment variable that is not set."""
+
+    def __init__(self, variable: str, key: str, source: str) -> None:
+        super().__init__(f"{source}: {key} uses ${{{variable}}}, but {variable} is not set")
+
+
+class MalformedVariableError(ConfigError):
+    """A profile value contains ``${`` that is not a complete ``${NAME}``."""
+
+    def __init__(self, value: str, key: str, source: str) -> None:
+        super().__init__(
+            f"{source}: {key} value {value!r} has a '${{' that is not a complete ${{NAME}}"
+        )
+
+
+class InvalidProfileError(ConfigError):
+    """A profile file is not YAML, or its settings break the settings model."""
+
+    def __init__(self, source: str, problems: Sequence[str]) -> None:
+        super().__init__(f"{source}: {'; '.join(problems)}")

@@ -1,0 +1,7 @@
+# configs/profiles/labpc.yaml
+profile: labpc
+paths: {data_root: /data/raman/datasets, runs_root: /data/raman/runs, archive_root: /archive/raman,
+        catalog: /data/raman/catalog.sqlite}
+backend: local
+local: {workers: 48}
+engine: {name: mock}

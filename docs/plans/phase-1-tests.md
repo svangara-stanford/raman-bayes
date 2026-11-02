@@ -482,7 +482,8 @@ Approved as a block on two conditions: each change is recorded in the DEVLOG ent
 | `test_run_config_json_round_trip` (test_run) | 10 | unchanged unless the seed or path changes | — |
 | Dummy backend and plan constructors (test_ports, typing_checks_ports) | 10, 12 | pass the new required fields | P3, P4 |
 | `test_stub_exits_nothing_to_do`, `test_stub_json_envelope` (test_cli_commands) | 03–14 | parametrized over the commands that are still stubs; each sub-step removes the commands it implements; both tests are deleted at 14 when none remain | real commands |
-| `test_profile_is_accepted` (test_cli_commands) | 05 | asserts `--profile` parses (no Click usage error) rather than exit 3, because loading `sherlock` without `SCRATCH` is now a real exit-2 error | config is real |
+| `test_profile_is_accepted` (test_cli_commands) | 05 (applied at 03) | asserts `--profile` parses (no Click usage error) rather than exit 3, because loading `sherlock` without `SCRATCH` is now a real exit-2 error | config is real; `validate-priors` exits 2 from 03 |
+| `test_emit_human_success_goes_to_stdout` (test_cli_output) | 05 | warnings on stderr, message alone on stdout | warnings to stderr for every command; approved 2026-11-02 |
 | `test_run_task_workers` ("4" → 3), `test_export_accepts_all_section_8_4_options`, `test_ingest_accepts_all_flags` (test_cli_commands) | 07, 11, 14 | assert "not a usage error" instead of exit 3; each command's own tests cover real behaviour | real commands |
 | CI `wheel-install` step `test "$code" -eq 3` for `doctor --json` (ci.yml, not a test file) | 14 | [C15] becomes `-eq 0`. Sub-step 14 is a planned stop: commit doctor, write the ci.yml diff to the scratchpad, print it, stop; Sreya applies it. A red wheel-install job at that point is expected and is not the "CI red twice" hard stop. | real doctor |
 
