@@ -147,7 +147,10 @@ def test_arrays_dtypes_shapes_chunks_shards_codecs(store: Path) -> None:
     assert intensity.shards == (65536, N_WN)
     (codec,) = intensity.compressors
     assert isinstance(codec, BloscCodec)
-    assert (codec.cname, codec.clevel, codec.shuffle) == ("zstd", 3, "shuffle")
+    # The serialised form, because zarr 3.1 holds cname and shuffle as enums and 3.4 as strings.
+    config = codec.to_dict()["configuration"]
+    assert isinstance(config, dict)
+    assert (config["cname"], config["clevel"], config["shuffle"]) == ("zstd", 3, "shuffle")
 
 
 def test_spectrum_id_is_raster_order(mini_scan: Path, raman_paths: PathsSettings) -> None:
