@@ -120,3 +120,14 @@ Short, dated entries: what was done, what was decided, anything overridden. Newe
 - Phase 0 test change applied early: `test_profile_is_accepted` takes its approved sub-step 05 form now ("--profile parses": under `--json`, stdout is one envelope for that command), because `validate-priors` really exits 2 on a missing file from this sub-step on.
 - Added tests: `test_rule1_same_id_for_window_and_end_member_allowed`, `test_rule4_touching_windows_do_not_overlap`, `test_valid_file_returns_spec_and_hash`, `test_auto_rejected_as_sd_rule_through_validate_file`, `test_warnings_do_not_block_a_valid_result`, `test_unreadable_and_non_mapping_files`.
 - Unsure: `validate-priors` keeps `--profile` (every command has it, Phase 0 decision) but doesn't use it; that will trip ARG001 when the temporary `cli/main.py` ignore is removed at sub-step 14.
+
+## 2026-11-02 — Phase 1 sub-step 04: legacy CSV and nmc_commercial.yaml
+- Branch `phase-1-01-foundation`. Built `io/legacy_csv.py` (`read_legacy_csv` → Window, `format_legacy_csv`, `HEADER`), `app/priors_csv.py` (`import_window`, `export_window`), the real `raman priors import-csv` / `export-csv`, and `configs/priors/nmc_commercial.yaml`.
+- A9 as decided: the first column is lowercased into the id and kept as `label` when that changes it (`D` → id `d`, label `D`); names equal up to case are a repeated-row error naming the line. Export writes ids and `repr(float)`, LF, no BOM, with a final newline (the originals have none; rows compare equal as values modulo case). The CSV has no label column, so round trips preserve everything but labels.
+- The header must match `HEADER` exactly after the BOM is stripped; otherwise `LegacyCsvHeaderError`.
+- `domain/priors_rules.py` now exposes `check_window` (rule 1 id pattern, rules 2, 3, 5) and `check_rules` uses it; findings are sorted by rule. Import runs `check_window`, so `--range 1750 1150` or a range that misses a peak exits 2 with the same messages `validate-priors` gives.
+- Import prints the fragment as a one-item YAML list for `windows:` (`exclude_defaults`); `--json` carries `window` (full dump) and `fragment`. Export validates the whole recipe first; an unknown window id names the windows that exist.
+- `nmc_commercial.yaml`: windows come from the two imports (ids, centers and bounds match the CSVs, as tested); labels, defaults, preprocessing and end members come from §5. The file parses equal to the §5 example.
+- `cli/main.py`: shared `_invalid` / `_finish` helpers for result-based commands; `validate-priors` now uses them (no behaviour change).
+- Phase 0 test changes (table): `priors import-csv` and `priors export-csv` moved out of the stub tests.
+- Added tests: `test_import_rejects_unexpected_header`, `test_cli_import_csv_missing_file_exits_2`, `test_cli_export_csv_invalid_priors_exits_2`. The list's `test_cli_import_csv_prints_fragment / --json` and `test_cli_export_csv_prints_csv / --json` are each two tests (`…_json`).

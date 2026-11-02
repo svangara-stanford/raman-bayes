@@ -19,6 +19,9 @@ __all__ = [
     "InfoValueError",
     "InputError",
     "InvalidScanInfoError",
+    "LegacyCsvError",
+    "LegacyCsvHeaderError",
+    "LegacyCsvRowError",
     "MissingInfoKeyError",
     "MissingInfoSectionError",
     "NegativeDurationError",
@@ -149,3 +152,25 @@ class SpectrumLineError(SpectrumFileError):
     def __init__(self, path: Path, line_number: int, line: str) -> None:
         self.line_number = line_number
         super().__init__(f"{path}, line {line_number}: expected two numbers, got {line!r}")
+
+
+# ---------------------------------------------------------------- legacy priors CSV
+
+
+class LegacyCsvError(InputError):
+    """A legacy priors CSV cannot be read."""
+
+
+class LegacyCsvHeaderError(LegacyCsvError):
+    """The first row is not the legacy header."""
+
+    def __init__(self, path: Path, expected: Sequence[str]) -> None:
+        super().__init__(f"{path}, line 1: expected the header {','.join(expected)!r}")
+
+
+class LegacyCsvRowError(LegacyCsvError):
+    """A row is not a peak name followed by five numbers, or repeats a peak."""
+
+    def __init__(self, path: Path, line_number: int, problem: str) -> None:
+        self.line_number = line_number
+        super().__init__(f"{path}, line {line_number}: {problem}")

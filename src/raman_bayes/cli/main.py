@@ -11,7 +11,7 @@ from typing import Annotated, NoReturn
 
 import typer
 
-from raman_bayes.app import validate
+from raman_bayes.app import priors_csv, validate
 from raman_bayes.cli.output import CliEnvelope, ExitCode, emit
 
 DEFAULT_PROFILE = "local"
@@ -50,6 +50,24 @@ def _stub(command: str, as_json: bool) -> NoReturn:
         message=f"raman {command}: not implemented yet",
     )
     emit(envelope, as_json=as_json)
+    raise typer.Exit(code=envelope.exit_code)
+
+
+def _invalid(
+    command: str, message: str, errors: tuple[str, ...], warnings: tuple[str, ...]
+) -> CliEnvelope:
+    return CliEnvelope(
+        command=command,
+        exit_code=ExitCode.VALIDATION,
+        ok=False,
+        message=message,
+        warnings=warnings,
+        errors=errors,
+    )
+
+
+def _finish(envelope: CliEnvelope, as_json: bool) -> NoReturn:
+    emit(envelope, as_json=as_json, warnings_to_stderr=True)
     raise typer.Exit(code=envelope.exit_code)
 
 
@@ -129,32 +147,24 @@ def validate_priors(
     """Validate a priors recipe; exit 2 on error."""
     result = validate.validate_priors_file(file)
     if result.spec is None:
-        envelope = CliEnvelope(
-            command="validate-priors",
-            exit_code=ExitCode.VALIDATION,
-            ok=False,
-            message=f"{file}: invalid priors ({len(result.errors)} error(s))",
-            warnings=result.warnings,
-            errors=result.errors,
-        )
-    else:
-        spec = result.spec.spec
-        envelope = CliEnvelope(
-            command="validate-priors",
-            exit_code=ExitCode.OK,
-            ok=True,
-            message=f"{file}: valid {spec.name} {spec.version} ({spec.status}), "
-            f"priors_hash {result.priors_hash}",
-            data={
-                "priors_hash": result.priors_hash,
-                "name": spec.name,
-                "version": spec.version,
-                "status": spec.status,
-            },
-            warnings=result.warnings,
-        )
-    emit(envelope, as_json=as_json, warnings_to_stderr=True)
-    raise typer.Exit(code=envelope.exit_code)
+        message = f"{file}: invalid priors ({len(result.errors)} error(s))"
+        _finish(_invalid("validate-priors", message, result.errors, result.warnings), as_json)
+    spec = result.spec.spec
+    envelope = CliEnvelope(
+        command="validate-priors",
+        exit_code=ExitCode.OK,
+        ok=True,
+        message=f"{file}: valid {spec.name} {spec.version} ({spec.status}), "
+        f"priors_hash {result.priors_hash}",
+        data={
+            "priors_hash": result.priors_hash,
+            "name": spec.name,
+            "version": spec.version,
+            "status": spec.status,
+        },
+        warnings=result.warnings,
+    )
+    _finish(envelope, as_json)
 
 
 @priors_app.command("import-csv")
@@ -169,7 +179,19 @@ def priors_import_csv(
     as_json: JsonOpt = False,
 ) -> None:
     """Convert a legacy CSV into a priors YAML window fragment."""
-    _stub("priors import-csv", as_json)
+    result = priors_csv.import_window(file, window_id, range_cm1)
+    if result.window is None or result.fragment is None:
+        message = f"{file}: cannot import ({len(result.errors)} error(s))"
+        _finish(_invalid("priors import-csv", message, result.errors, result.warnings), as_json)
+    envelope = CliEnvelope(
+        command="priors import-csv",
+        exit_code=ExitCode.OK,
+        ok=True,
+        message=result.fragment.rstrip("\n"),
+        data={"window": result.window.model_dump(mode="json"), "fragment": result.fragment},
+        warnings=result.warnings,
+    )
+    _finish(envelope, as_json)
 
 
 @priors_app.command("export-csv")
@@ -180,7 +202,19 @@ def priors_export_csv(
     as_json: JsonOpt = False,
 ) -> None:
     """Write one window of a priors recipe in the legacy CSV format."""
-    _stub("priors export-csv", as_json)
+    result = priors_csv.export_window(file, window_id)
+    if result.csv is None:
+        message = f"{file}: cannot export window {window_id!r} ({len(result.errors)} error(s))"
+        _finish(_invalid("priors export-csv", message, result.errors, result.warnings), as_json)
+    envelope = CliEnvelope(
+        command="priors export-csv",
+        exit_code=ExitCode.OK,
+        ok=True,
+        message=result.csv.rstrip("\n"),
+        data={"window_id": window_id, "csv": result.csv},
+        warnings=result.warnings,
+    )
+    _finish(envelope, as_json)
 
 
 # ---------------------------------------------------------------- runs

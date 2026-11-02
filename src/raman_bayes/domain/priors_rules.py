@@ -1,8 +1,10 @@
 """The file-level priors rules (DESIGN.md §5 rules 1-7) and the priors hash (rule 9).
 
 Rule 8 needs a dataset axis and runs at plan time. Every rule reports every violation it finds,
-so a user fixes a file in one pass. Ids are unique within their kind (windows, peaks across all
-windows, end members): the §5 example names both a window and an end member ``carbon``.
+so a user fixes a file in one pass. ``check_window`` holds the rules that need only one window,
+so an imported window fragment can be checked before it joins a file. Ids are unique within
+their kind (windows, peaks across all windows, end members): the §5 example names both a
+window and an end member ``carbon``.
 """
 
 import hashlib
@@ -25,6 +27,7 @@ __all__ = [
     "Severity",
     "canonical_json",
     "check_rules",
+    "check_window",
     "priors_hash",
 ]
 
@@ -62,9 +65,29 @@ class RuleReport:
 
 
 def check_rules(spec: PriorsSpec) -> RuleReport:
-    """Apply rules 1-7 to ``spec`` and return every finding; never raises for a bad recipe."""
-    checks = (_rule1, _rule2, _rule3, _rule4, _rule5, _rule6, _rule7)
-    return RuleReport(tuple(itertools.chain.from_iterable(check(spec) for check in checks)))
+    """Apply rules 1-7 to ``spec`` and return every finding, by rule; never raises."""
+    findings = itertools.chain(
+        _schema_and_unique_ids(spec),
+        _bad_ids("end member", [m.id for m in spec.end_members]),
+        *(_window_findings(window) for window in spec.windows),
+        _rule4(spec),
+        _rule6(spec),
+        _rule7(spec),
+    )
+    return RuleReport(tuple(sorted(findings, key=lambda f: f.rule)))
+
+
+def check_window(window: Window) -> RuleReport:
+    """Apply the single-window rules (1 id pattern, 2, 3, 5) to ``window``; never raises."""
+    return RuleReport(tuple(sorted(_window_findings(window), key=lambda f: f.rule)))
+
+
+def _window_findings(window: Window) -> Iterator[Finding]:
+    yield from _bad_ids("window", [window.id])
+    yield from _bad_ids("peak", [p.id for p in window.peaks])
+    yield from _rule2(window)
+    yield from _rule3(window)
+    yield from _rule5(window)
 
 
 def canonical_json(spec: PriorsSpec) -> bytes:
@@ -84,41 +107,41 @@ def priors_hash(spec: PriorsSpec) -> str:
     return hashlib.sha256(canonical_json(spec)).hexdigest()
 
 
-def _peaks(spec: PriorsSpec) -> Iterator[tuple[Window, Peak]]:
-    return ((window, peak) for window in spec.windows for peak in window.peaks)
-
-
 def _overlap(a: Bounds, b: Bounds) -> bool:
     # Open intervals: windows or bounds that only touch do not overlap.
     return a[0] < b[1] and b[0] < a[1]
 
 
-def _rule1(spec: PriorsSpec) -> Iterator[Finding]:
+def _schema_and_unique_ids(spec: PriorsSpec) -> Iterator[Finding]:
     if spec.schema_version not in KNOWN_SCHEMA_VERSIONS:
         known = ", ".join(sorted(KNOWN_SCHEMA_VERSIONS))
         yield Finding(1, "error", f"schema_version {spec.schema_version!r} is not one of: {known}")
     kinds = {
         "window": [w.id for w in spec.windows],
-        "peak": [p.id for _, p in _peaks(spec)],
+        "peak": [p.id for w in spec.windows for p in w.peaks],
         "end member": [m.id for m in spec.end_members],
     }
     for kind, ids in kinds.items():
-        for id_ in ids:
-            if ID_PATTERN.fullmatch(id_) is None:
-                yield Finding(
-                    1,
-                    "error",
-                    f"{kind} id {id_!r} must be a lowercase letter followed by up to 31 "
-                    "lowercase letters, digits or underscores",
-                )
         for id_, count in Counter(ids).items():
             if count > 1:
                 yield Finding(1, "error", f"{kind} id {id_!r} is used {count} times")
 
 
-def _rule2(spec: PriorsSpec) -> Iterator[Finding]:
-    for window, peak in _peaks(spec):
-        (lo, hi), (c_lo, c_hi) = window.range_cm1, peak.center.bounds
+def _bad_ids(kind: str, ids: list[str]) -> Iterator[Finding]:
+    for id_ in ids:
+        if ID_PATTERN.fullmatch(id_) is None:
+            yield Finding(
+                1,
+                "error",
+                f"{kind} id {id_!r} must be a lowercase letter followed by up to 31 "
+                "lowercase letters, digits or underscores",
+            )
+
+
+def _rule2(window: Window) -> Iterator[Finding]:
+    lo, hi = window.range_cm1
+    for peak in window.peaks:
+        c_lo, c_hi = peak.center.bounds
         where = f"peak {peak.id} in window {window.id}"
         if not (lo <= c_lo and c_hi <= hi):
             yield Finding(
@@ -136,11 +159,10 @@ def _rule2(spec: PriorsSpec) -> Iterator[Finding]:
             )
 
 
-def _rule3(spec: PriorsSpec) -> Iterator[Finding]:
-    for window in spec.windows:
-        if not window.range_cm1[0] < window.range_cm1[1]:
-            yield Finding(3, "error", f"window {window.id}: range_cm1 lower must be below upper")
-    for window, peak in _peaks(spec):
+def _rule3(window: Window) -> Iterator[Finding]:
+    if not window.range_cm1[0] < window.range_cm1[1]:
+        yield Finding(3, "error", f"window {window.id}: range_cm1 lower must be below upper")
+    for peak in window.peaks:
         yield from _peak_bounds(window, peak)
 
 
@@ -173,22 +195,21 @@ def _rule4(spec: PriorsSpec) -> Iterator[Finding]:
             )
 
 
-def _rule5(spec: PriorsSpec) -> Iterator[Finding]:
-    for window in spec.windows:
-        if window.ordered:
-            continue
-        for a, b in itertools.combinations(window.peaks, 2):
-            if _overlap(a.center.bounds, b.center.bounds):
-                yield Finding(
-                    5,
-                    "warning",
-                    f"window {window.id}: center bounds of {a.id} and {b.id} overlap, so the "
-                    "peaks may swap; set ordered: true if they are listed in center order",
-                )
+def _rule5(window: Window) -> Iterator[Finding]:
+    if window.ordered:
+        return
+    for a, b in itertools.combinations(window.peaks, 2):
+        if _overlap(a.center.bounds, b.center.bounds):
+            yield Finding(
+                5,
+                "warning",
+                f"window {window.id}: center bounds of {a.id} and {b.id} overlap, so the "
+                "peaks may swap; set ordered: true if they are listed in center order",
+            )
 
 
 def _rule6(spec: PriorsSpec) -> Iterator[Finding]:
-    peak_ids = {p.id for _, p in _peaks(spec)}
+    peak_ids = {p.id for w in spec.windows for p in w.peaks}
     owners: dict[str, list[str]] = {}
     for member in spec.end_members:
         for peak_id in member.peaks:
