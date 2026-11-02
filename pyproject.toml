@@ -25,6 +25,7 @@ dependencies = [
     "zarr>=3.0,<4",
     "pydantic>=2.6,<3",
     "pydantic-settings>=2.16.2,<3",
+    "blake3>=1.0.11,<2",
     "typer>=0.12",
     "rich>=13",
     "pyyaml>=6",
@@ -107,9 +108,10 @@ plugins = ["pydantic.mypy"]
 files = ["src", "tests", "scripts"]
 mypy_path = "src"
 
-# pyarrow ships no type hints (no py.typed); scope the ignore to pyarrow only.
+# pyarrow and scipy ship no type hints (no py.typed); scope the ignore to those two only.
+# scipy-stubs exists but would be another dependency.
 [[tool.mypy.overrides]]
-module = ["pyarrow", "pyarrow.*"]
+module = ["pyarrow", "pyarrow.*", "scipy", "scipy.*"]
 ignore_missing_imports = true
 
 [tool.pydantic-mypy]

@@ -49,6 +49,7 @@ COMMANDS: dict[str, list[str]] = {
 NAMES = list(COMMANDS)
 # Commands built so far; each one has its own test module.
 IMPLEMENTED = {
+    "ingest",
     "validate-priors",
     "priors import-csv",
     "priors export-csv",
@@ -202,6 +203,7 @@ def test_export_accepts_all_section_8_4_options() -> None:
 
 
 def test_ingest_accepts_all_flags() -> None:
+    # Not a Click usage error: under --json a parsed command always writes one envelope.
     argv = [
         *COMMANDS["ingest"],
         "--sample",
@@ -211,5 +213,7 @@ def test_ingest_accepts_all_flags() -> None:
         "--allow-partial-grid",
         "--allow-axis-mismatch",
         "--as-job",
+        "--json",
     ]
-    assert runner.invoke(app, argv).exit_code == ExitCode.NOTHING_TO_DO
+    (line,) = runner.invoke(app, argv).stdout.splitlines()
+    assert CliEnvelope.model_validate_json(line).command == "ingest"

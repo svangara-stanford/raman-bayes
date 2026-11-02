@@ -12,7 +12,10 @@ from typing import Annotated, Any, NoReturn
 import typer
 
 from raman_bayes.app import catalog_views, priors_csv, validate
+from raman_bayes.app.ingest import IngestRequest, ScanOutcome, ScanStatus
+from raman_bayes.app.ingest import ingest as ingest_scans
 from raman_bayes.cli.output import CliEnvelope, ExitCode, emit
+from raman_bayes.cli.reports import ingest_report
 from raman_bayes.config.settings import LoadedSettings, load_settings
 from raman_bayes.domain.errors import ConfigError
 
@@ -133,7 +136,49 @@ def ingest(
     as_json: JsonOpt = False,
 ) -> None:
     """Pack a Nanofinder export into dataset.zarr."""
-    _stub("ingest", as_json)
+    loaded = _settings("ingest", profile, as_json)
+    refused = _slurm_only({"--archive": archive, "--as-job": as_job}, loaded)
+    if refused:
+        _finish(_invalid("ingest", "cannot ingest with these options", refused, ()), as_json)
+    request = IngestRequest(
+        path=path,
+        sample=sample,
+        allow_partial_grid=allow_partial_grid,
+        allow_axis_mismatch=allow_axis_mismatch,
+        dry_run=dry_run,
+    )
+    outcomes = ingest_scans(request, loaded.settings.paths)
+    _finish(_ingest_envelope(outcomes), as_json)
+
+
+def _slurm_only(flags: dict[str, bool], loaded: LoadedSettings) -> tuple[str, ...]:
+    # Archiving and running as a job need the Slurm backend, which is not available yet.
+    backend = loaded.settings.backend
+    reason = (
+        f"needs the slurm_array backend; profile {loaded.settings.profile!r} uses {backend}"
+        if backend == "local"
+        else "is not supported yet"
+    )
+    return tuple(f"{flag} {reason}" for flag, given in flags.items() if given)
+
+
+def _ingest_envelope(outcomes: tuple[ScanOutcome, ...]) -> CliEnvelope:
+    statuses = {o.status for o in outcomes}
+    if ScanStatus.FAILED in statuses:
+        code = ExitCode.VALIDATION
+    elif statuses & {ScanStatus.INGESTED, ScanStatus.DRY_RUN}:
+        code = ExitCode.OK
+    else:
+        code = ExitCode.NOTHING_TO_DO
+    return CliEnvelope(
+        command="ingest",
+        exit_code=code,
+        ok=code is ExitCode.OK,
+        message=ingest_report(outcomes),
+        data={"scans": [o.as_json() for o in outcomes]},
+        warnings=tuple(w for o in outcomes for w in o.warnings),
+        errors=tuple(e for o in outcomes for e in o.errors),
+    )
 
 
 @datasets_app.command("list")
