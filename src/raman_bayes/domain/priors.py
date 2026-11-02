@@ -1,18 +1,52 @@
 """Priors recipe models (DESIGN.md §5). Key names follow ``priors.yaml`` exactly.
 
-Structure only: the §5 validation rules 1-9 arrive in Phase 1. Unknown keys (including the
-reserved ``derived:`` section) are rejected by ``extra="forbid"``, and named choices are
-``Literal``s holding the v1 vocabulary.
+Structure and the named hyperparameter rules; the §5 validation rules are in
+``priors_rules``. Unknown keys (including the reserved ``derived:`` section) are rejected by
+``extra="forbid"``, and named choices are ``Literal``s holding the v1 vocabulary.
 """
 
+from collections.abc import Callable
 from typing import Literal
 
 from raman_bayes.domain._base import DomainModel
 
+__all__ = [
+    "SD_RULES",
+    "BaselineSpec",
+    "Bounds",
+    "CenterDefault",
+    "CenterPrior",
+    "Defaults",
+    "DespikeSpec",
+    "EndMember",
+    "FwhmDefault",
+    "FwhmPrior",
+    "LikelihoodSpec",
+    "Peak",
+    "PreprocessingSpec",
+    "PresenceDefault",
+    "PriorsSpec",
+    "SdRule",
+    "SmoothingSpec",
+    "SpecMeta",
+    "Window",
+    "center_sd",
+    "quarter_range",
+]
+
 Bounds = tuple[float, float]
 
-# Named hyperparameter rules. ``quarter_range``: sd = (upper - lower) / 4 unless the peak sets sd.
 SdRule = Literal["quarter_range"]
+
+
+def quarter_range(bounds: Bounds) -> float:
+    """Return ``(upper - lower) / 4``: a quarter of the range the bounds span."""
+    lower, upper = bounds
+    return (upper - lower) / 4
+
+
+# Every named rule a priors file may cite; the keys are exactly the SdRule vocabulary.
+SD_RULES: dict[SdRule, Callable[[Bounds], float]] = {"quarter_range": quarter_range}
 
 
 class SpecMeta(DomainModel):
@@ -25,11 +59,15 @@ class SpecMeta(DomainModel):
 
 
 class PresenceDefault(DomainModel):
+    """Default presence prior: each peak is present with probability ``p``."""
+
     prior: Literal["bernoulli"]
     p: float
 
 
 class CenterDefault(DomainModel):
+    """Default center prior family and the named rule that sets its sd."""
+
     prior: Literal["normal_truncated"]
     sd_rule: SdRule
 
@@ -41,6 +79,8 @@ class FwhmDefault(DomainModel):
 
 
 class LikelihoodSpec(DomainModel):
+    """Observation model; ``nu`` is the Student-t degrees of freedom."""
+
     model: Literal["student_t"]
     nu: float
 
@@ -56,12 +96,16 @@ class Defaults(DomainModel):
 
 
 class DespikeSpec(DomainModel):
+    """Median/MAD despiking: ``kernel`` channels wide, spikes above ``thresh`` MADs."""
+
     method: Literal["median_mad"]
     kernel: int
     thresh: float
 
 
 class BaselineSpec(DomainModel):
+    """Asymmetric least-squares baseline with smoothness ``lam`` and asymmetry ``p``."""
+
     method: Literal["als"]
     lam: float
     p: float
@@ -86,22 +130,30 @@ class PreprocessingSpec(DomainModel):
 
 
 class EndMember(DomainModel):
+    """A named group of peaks attributed to one material."""
+
     id: str
     label: str | None = None
     peaks: tuple[str, ...]
 
 
 class CenterPrior(DomainModel):
+    """A peak's center prior in cm^-1; ``sd`` overrides the default ``sd_rule``."""
+
     mean: float
     bounds: Bounds
     sd: float | None = None
 
 
 class FwhmPrior(DomainModel):
+    """A peak's FWHM bounds in cm^-1."""
+
     bounds: Bounds
 
 
 class Peak(DomainModel):
+    """One peak of a window: its id, display label and priors."""
+
     id: str
     label: str | None = None
     center: CenterPrior
@@ -109,6 +161,8 @@ class Peak(DomainModel):
 
 
 class Window(DomainModel):
+    """A spectral range fitted independently, with the peaks it contains."""
+
     id: str
     range_cm1: Bounds
     peaks: tuple[Peak, ...]
@@ -125,3 +179,10 @@ class PriorsSpec(DomainModel):
     preprocessing: PreprocessingSpec
     end_members: tuple[EndMember, ...]
     windows: tuple[Window, ...]
+
+
+def center_sd(peak: Peak, rule: SdRule) -> float:
+    """Return the sd of ``peak``'s center prior: its ``sd`` if set, else ``rule`` of its bounds."""
+    if peak.center.sd is not None:
+        return peak.center.sd
+    return SD_RULES[rule](peak.center.bounds)

@@ -1,0 +1,12 @@
+# configs/profiles/sherlock.yaml
+profile: sherlock
+paths: {data_root: "${SCRATCH}/raman/datasets", runs_root: "${SCRATCH}/raman/runs",
+        archive_root: "/oak/stanford/groups/<PI_GROUP>/raman",      # fill in; not an env var
+        catalog: "${GROUP_HOME}/svangara/raman/catalog.sqlite",
+        repo_dir: "${GROUP_HOME}/svangara/raman-bayes"}
+backend: slurm_array
+slurm: {partitions: [normal, owners], cpus_per_task: 16, mem_per_cpu: 4G, target_task_minutes: 60,
+        max_array_tasks: 500, max_concurrent: 200, pixi_bin: "${HOME}/.pixi/bin/pixi",
+        lock_stale_minutes: 30}
+engine: {name: mock}
+limits: {max_core_hours_without_confirm: 2000}

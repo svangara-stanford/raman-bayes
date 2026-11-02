@@ -15,6 +15,11 @@ import pyarrow as pa
 
 @dataclass(frozen=True)
 class PosteriorSummary:
+    """Summary statistics of one posterior quantity.
+
+    ``at_bound_frac`` is the fraction of draws at a prior bound, when the engine reports it.
+    """
+
     mean: float
     median: float
     sd: float

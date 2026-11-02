@@ -24,6 +24,13 @@ class ExitCode(IntEnum):
     BACKEND = 4  # backend or infrastructure failure
 
 
+class EnvelopeStatusError(ValueError):
+    """An envelope's ``ok`` disagrees with its ``exit_code``."""
+
+    def __init__(self, ok: bool, exit_code: ExitCode) -> None:
+        super().__init__(f"ok={ok} contradicts exit_code={int(exit_code)}")
+
+
 class CliEnvelope(BaseModel):
     """The single JSON object a command writes to stdout under ``--json`` (provisional)."""
 
@@ -41,7 +48,7 @@ class CliEnvelope(BaseModel):
     @model_validator(mode="after")
     def _ok_matches_exit_code(self) -> Self:
         if self.ok != (self.exit_code is ExitCode.OK):
-            raise ValueError(f"ok={self.ok} contradicts exit_code={int(self.exit_code)}")
+            raise EnvelopeStatusError(self.ok, self.exit_code)
         return self
 
 
@@ -54,20 +61,32 @@ _STYLE = {
 
 
 def make_console(stream: TextIO) -> Console:
-    """A Rich console that emits ANSI only when ``stream`` is a TTY, whatever FORCE_COLOR says."""
+    """Return a Rich console that emits ANSI only when ``stream`` is a TTY, despite FORCE_COLOR."""
     return Console(file=stream, force_terminal=stream.isatty(), highlight=False)
 
 
 def emit(envelope: CliEnvelope, *, as_json: bool) -> None:
-    """Write ``envelope``: one JSON line on stdout, or Rich text (stdout for 0/3, else stderr)."""
+    """Write ``envelope``: one JSON line on stdout, or Rich text.
+
+    In text mode the message goes to stdout for exit 0/3 and to stderr otherwise; warnings and
+    errors always go to stderr. Under ``--json`` they are in the envelope only.
+    """
     if as_json:
         typer.echo(envelope.model_dump_json())
         return
     ok = envelope.exit_code in (ExitCode.OK, ExitCode.NOTHING_TO_DO)
-    console = make_console(sys.stdout if ok else sys.stderr)
     style = _STYLE[envelope.exit_code]
-    lines = [envelope.message] if envelope.message is not None else []
-    lines += [f"warning: {w}" for w in envelope.warnings]
-    lines += [f"error: {e}" for e in envelope.errors]
+    message = [envelope.message] if envelope.message is not None else []
+    warnings = [f"warning: {w}" for w in envelope.warnings]
+    errors = [f"error: {e}" for e in envelope.errors]
+    if ok:
+        _print(sys.stdout, message, style)
+        _print(sys.stderr, warnings, _STYLE[ExitCode.NOTHING_TO_DO])
+        return
+    _print(sys.stderr, [*message, *warnings, *errors], style)
+
+
+def _print(stream: TextIO, lines: list[str], style: str) -> None:
+    console = make_console(stream)
     for line in lines:
         console.print(line, style=style, markup=False, soft_wrap=True)

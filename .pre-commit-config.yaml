@@ -1,7 +1,8 @@
 # Run with `pixi run pre-commit run --all-files`. The ruff, mypy and import-linter hooks call
 # pixi, so they use the versions pinned in pixi.lock rather than separate hook environments.
-# The legacy priors CSVs are verbatim inputs (BOM, line endings and missing final newline are
-# what the CSV reader must handle), so the fixers never touch them.
+# The legacy priors CSVs and the Nanofinder fixtures are verbatim inputs (BOM, CRLF, single-space
+# blank lines and missing final newlines are what the readers must handle), so the fixers never
+# touch them.
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
@@ -9,9 +10,9 @@ repos:
       - id: check-yaml
       - id: check-toml
       - id: end-of-file-fixer
-        exclude: ^(pixi\.lock|configs/priors/legacy/.*)$
+        exclude: ^(pixi\.lock|configs/priors/legacy/.*|tests/fixtures/.*)$
       - id: trailing-whitespace
-        exclude: ^(pixi\.lock|configs/priors/legacy/.*)$
+        exclude: ^(pixi\.lock|configs/priors/legacy/.*|tests/fixtures/.*)$
         args: [--markdown-linebreak-ext=md]
       - id: check-added-large-files
         exclude: ^pixi\.lock$  # ~550 KB, over the 500 KB default

@@ -15,10 +15,12 @@ ENVELOPE_SCHEMA = ROOT / "schemas" / "cli" / "envelope.schema.json"
 
 
 def render_envelope_schema() -> str:
+    """Return the CliEnvelope JSON schema as sorted, indented JSON ending in a newline."""
     return json.dumps(CliEnvelope.model_json_schema(), indent=2, sort_keys=True) + "\n"
 
 
 def main(argv: list[str] | None = None) -> None:
+    """Write the envelope schema to ``--out``, creating parent directories."""
     parser = argparse.ArgumentParser(description="Generate the CLI JSON schemas.")
     parser.add_argument("--out", type=Path, default=ENVELOPE_SCHEMA)
     args = parser.parse_args(argv)

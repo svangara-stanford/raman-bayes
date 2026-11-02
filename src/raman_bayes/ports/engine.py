@@ -29,6 +29,8 @@ class PreparedSpectrum:
 
 @dataclass(frozen=True)
 class EngineConfig:
+    """Sampler settings; ``options`` holds engine-specific keys."""
+
     n_iter: int = 6000
     burn_in: int = 3000
     thin: int = 5
@@ -37,14 +39,18 @@ class EngineConfig:
 
 @runtime_checkable
 class PeakEngine(Protocol):
+    """Fits the peaks of one window to preprocessed spectra."""
+
     name: str
     version: str
 
-    def validate(self, window: Window, cfg: EngineConfig) -> list[str]: ...
+    def validate(self, window: Window, cfg: EngineConfig) -> list[str]:
+        """Return the reasons this engine cannot fit ``window`` with ``cfg``; empty if it can."""
 
     def fit(
         self, s: PreparedSpectrum, window: Window, cfg: EngineConfig, rng: np.random.Generator
-    ) -> WindowFitResult: ...
+    ) -> WindowFitResult:
+        """Fit ``window`` to ``s``, drawing randomness only from ``rng``."""
 
     def fit_many(
         self,
@@ -53,6 +59,10 @@ class PeakEngine(Protocol):
         cfg: EngineConfig,
         seeds: Sequence[np.random.SeedSequence],
     ) -> list[WindowFitResult]:
+        """Fit each spectrum with its own seed; results are in the order of ``ss``.
+
+        Raises ValueError when ``ss`` and ``seeds`` differ in length.
+        """
         return [
             self.fit(s, window, cfg, np.random.default_rng(seed))
             for s, seed in zip(ss, seeds, strict=True)

@@ -100,9 +100,8 @@ def test_emit_human_success_goes_to_stdout(
 ) -> None:
     emit(_envelope(code, message="all good", warnings=["careful"]), as_json=False)
     out, err = capsys.readouterr()
-    assert "all good" in out
-    assert "warning: careful" in out
-    assert err == ""
+    assert out == "all good\n"
+    assert err == "warning: careful\n"
 
 
 @pytest.mark.parametrize("code", [ExitCode.VALIDATION, ExitCode.BACKEND])
