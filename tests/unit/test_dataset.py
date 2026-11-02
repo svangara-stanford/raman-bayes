@@ -25,8 +25,8 @@ from raman_bayes.domain.dataset import (
 )
 
 # Dotted manifest keys: the §3 table, plus grid.allow_partial, filename_pattern.regex and
-# instrument.raw_stage (§3 text), n_spectra (§3 partial grids) and the provisional
-# identity/provenance fields. Copied by hand; never generated from the code under test.
+# instrument.raw_stage (§3 text), n_spectra (§3 partial grids) and the §4 identity and
+# provenance fields. Copied by hand; never generated from the code under test.
 MANIFEST_KEYS = {
     "scan",
     "acquired_at",
@@ -178,9 +178,9 @@ def test_every_model_is_frozen_and_forbids_extra() -> None:
         assert model.model_config.get("extra") == "forbid", model.__name__
 
 
-def test_scan_info_is_marked_provisional() -> None:
+def test_scan_info_is_not_provisional() -> None:
     assert ScanInfo.__doc__ is not None
-    assert "provisional" in ScanInfo.__doc__.lower()
+    assert "provisional" not in ScanInfo.__doc__.lower()
 
 
 def test_raw_stage_is_verbatim_text() -> None:
@@ -195,57 +195,88 @@ def test_raw_stage_is_verbatim_text() -> None:
 # ---------------------------------------------------------------- round-trip
 
 finite = st.floats(allow_nan=False, allow_infinity=False)
+coordinate = st.floats(min_value=-1e4, max_value=1e4, allow_nan=False)
+step = st.floats(min_value=1e-3, max_value=10.0) | st.floats(min_value=-10.0, max_value=-1e-3)
 naive_dt = st.datetimes(min_value=datetime(1990, 1, 1), max_value=datetime(2100, 1, 1))
 utc_dt = st.datetimes(
     min_value=datetime(1990, 1, 1), max_value=datetime(2100, 1, 1), timezones=st.just(UTC)
 )
 counts = st.integers(min_value=1, max_value=4096)
-axes = st.builds(AxisSpec, start_um=finite, stop_um=finite, step_um=finite)
-grids = st.builds(
-    GridSpec, nx=counts, ny=counts, nz=counts, x=axes, y=axes, z=axes, allow_partial=st.booleans()
-)
+
+
+@st.composite
+def axes(draw: st.DrawFn, n: int) -> AxisSpec:
+    """Draw an axis consistent with ``n`` points (§3): one point, or ends within half a step."""
+    start = draw(coordinate)
+    if n == 1:
+        return AxisSpec(start_um=start, stop_um=start, step_um=0.0)
+    step_um = draw(step)
+    stop = start + (n - 1) * step_um + draw(st.floats(-0.49, 0.49)) * abs(step_um)
+    return AxisSpec(start_um=start, stop_um=stop, step_um=step_um)
+
+
+@st.composite
+def grids(draw: st.DrawFn) -> GridSpec:
+    nx, ny, nz = draw(counts), draw(counts), draw(st.integers(min_value=1, max_value=8))
+    return GridSpec(
+        nx=nx,
+        ny=ny,
+        nz=nz,
+        x=draw(axes(nx)),
+        y=draw(axes(ny)),
+        z=draw(axes(nz)),
+        allow_partial=draw(st.booleans()),
+    )
+
+
 instruments = st.builds(
     InstrumentInfo, system=st.text(), detector=st.text(), positioner=st.text(), raw_stage=st.text()
 )
 acqs = st.builds(
     AcquisitionInfo,
-    exposure_s=finite,
+    exposure_s=st.floats(min_value=1e-6, max_value=1e4),
     n_accum=counts,
     ccd_temp_c=finite,
     central_pixel=st.integers(min_value=0, max_value=4096),
     head_model=st.text(),
 )
-manifests = st.builds(
-    DatasetManifest,
-    scan=st.text(min_size=1),
-    acquired_at=naive_dt,
-    duration_s=finite,
-    instrument=instruments,
-    acq=acqs,
-    n_wn=counts,
-    n_series=st.just(1),
-    grid=grids,
-    dataset_id=st.text(min_size=1),
-    sample=st.none() | st.text(),
-    n_spectra=counts,
-    content_hash=st.text(alphabet="0123456789abcdef", min_size=1),
-    created_at=utc_dt,
-)
 
 
-@given(manifests)
+@st.composite
+def manifests(draw: st.DrawFn) -> DatasetManifest:
+    grid = draw(grids())
+    size = grid.nx * grid.ny * grid.nz
+    n_spectra = draw(st.integers(1, size)) if grid.allow_partial else size
+    return DatasetManifest(
+        scan=draw(st.text(min_size=1)),
+        acquired_at=draw(naive_dt),
+        duration_s=draw(st.floats(min_value=0, max_value=1e6)),
+        instrument=draw(instruments),
+        acq=draw(acqs),
+        n_wn=draw(counts),
+        n_series=1,
+        grid=grid,
+        dataset_id=draw(st.text(min_size=1)),
+        sample=draw(st.none() | st.text()),
+        n_spectra=n_spectra,
+        content_hash=draw(st.text(alphabet="0123456789abcdef", min_size=1)),
+        created_at=draw(utc_dt),
+    )
+
+
+@given(manifests())
 def test_manifest_json_round_trip(manifest: DatasetManifest) -> None:
     assert DatasetManifest.model_validate_json(manifest.model_dump_json()) == manifest
 
 
-@given(manifests)
+@given(manifests())
 def test_manifest_python_round_trip(manifest: DatasetManifest) -> None:
     assert DatasetManifest.model_validate(manifest.model_dump()) == manifest
 
 
 def test_manifest_rejects_unknown_nested_key() -> None:
     axis = {"start_um": 0.0, "stop_um": 1.0, "step_um": 1.0}
-    grid: dict[str, Any] = {"nx": 2, "ny": 1, "nz": 1, "x": axis, "y": axis, "z": axis}
+    grid: dict[str, Any] = {"nx": 2, "ny": 2, "nz": 2, "x": axis, "y": axis, "z": axis}
     GridSpec.model_validate(grid)
     with pytest.raises(ValidationError) as exc:
         GridSpec.model_validate({**grid, "x": {**axis, "points": 2}})
@@ -310,3 +341,122 @@ def test_acquired_at_stays_naive() -> None:
     restored = DatasetManifest.model_validate_json(manifest.model_dump_json())
     assert restored.acquired_at == datetime(2026, 5, 28, 15, 47, 23)
     assert restored.acquired_at.tzinfo is None
+
+
+# ---------------------------------------------------------------- §3 constraints
+
+
+def _grid_fields(**overrides: Any) -> dict[str, Any]:
+    point = {"start_um": 42.6788, "stop_um": 42.6788, "step_um": 0.0}
+    x = {"start_um": 28.5139, "stop_um": 77.5378, "step_um": 1.0005}
+    y = {"start_um": 26.9586, "stop_um": 50.9488, "step_um": 0.9996}
+    return {"nx": 50, "ny": 25, "nz": 1, "x": x, "y": y, "z": point} | overrides
+
+
+def _error_types(exc: pytest.ExceptionInfo[ValidationError]) -> list[tuple[Any, str]]:
+    return [(error["loc"], error["type"]) for error in exc.value.errors()]
+
+
+@pytest.mark.parametrize("count", ["nx", "ny", "nz"])
+@pytest.mark.parametrize("value", [0, -1])
+def test_grid_counts_must_be_positive(count: str, value: int) -> None:
+    GridSpec.model_validate(_grid_fields())
+    with pytest.raises(ValidationError) as exc:
+        GridSpec.model_validate(_grid_fields(**{count: value}))
+    assert _error_types(exc) == [((count,), "greater_than_equal")]
+
+
+@pytest.mark.parametrize(
+    "axis",
+    [
+        {"start_um": 1.0, "stop_um": 1.0, "step_um": 0.5},
+        {"start_um": 1.0, "stop_um": 2.0, "step_um": 0.0},
+        {"start_um": float("nan"), "stop_um": float("nan"), "step_um": 0.0},
+    ],
+)
+def test_single_point_axis_needs_zero_step_and_equal_ends(axis: dict[str, float]) -> None:
+    with pytest.raises(ValidationError, match="axis z") as exc:
+        GridSpec.model_validate(_grid_fields(z=axis))
+    assert _error_types(exc) == [((), "single_point_axis")]
+
+
+def test_multi_point_axis_stop_within_half_step() -> None:
+    def x_axis(stop: float, step_um: float = 1.0) -> dict[str, Any]:
+        return _grid_fields(nx=11, x={"start_um": 0.0, "stop_um": stop, "step_um": step_um})
+
+    for stop in (10.0, 9.5, 10.5, 10.0001):
+        GridSpec.model_validate(x_axis(stop))
+    GridSpec.model_validate(x_axis(-10.0, -1.0))
+    for stop, step_um in ((10.51, 1.0), (9.49, 1.0), (10.0, -1.0), (float("nan"), 1.0)):
+        with pytest.raises(ValidationError, match="axis x") as exc:
+            GridSpec.model_validate(x_axis(stop, step_um))
+        assert _error_types(exc) == [((), "axis_stop_mismatch")]
+    with pytest.raises(ValidationError, match="axis x") as exc:
+        GridSpec.model_validate(x_axis(0.0, 0.0))
+    assert _error_types(exc) == [((), "multi_point_axis_zero_step")]
+
+
+def _acq_fields(**overrides: Any) -> dict[str, Any]:
+    fields = {
+        "exposure_s": 0.2,
+        "n_accum": 5,
+        "ccd_temp_c": -72.0,
+        "central_pixel": 505,
+        "head_model": "DU920P_BEX2D",
+    }
+    return fields | overrides
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "error"),
+    [
+        ("exposure_s", 0.0, "greater_than"),
+        ("exposure_s", -0.2, "greater_than"),
+        ("n_accum", 0, "greater_than_equal"),
+        ("central_pixel", -1, "greater_than_equal"),
+    ],
+)
+def test_acquisition_constraints(field: str, value: float, error: str) -> None:
+    AcquisitionInfo.model_validate(_acq_fields(central_pixel=0, n_accum=1))
+    with pytest.raises(ValidationError) as exc:
+        AcquisitionInfo.model_validate(_acq_fields(**{field: value}))
+    assert _error_types(exc) == [((field,), error)]
+
+
+@pytest.mark.parametrize("n_series", [0, 2, 10])
+def test_n_series_other_than_1_rejected_by_model(n_series: int) -> None:
+    fields = {k: v for k, v in _manifest_fields().items() if k in SCAN_INFO_KEYS}
+    ScanInfo.model_validate(fields)
+    with pytest.raises(ValidationError, match="time series") as exc:
+        ScanInfo.model_validate(fields | {"n_series": n_series})
+    assert _error_types(exc) == [(("n_series",), "time_series_not_supported")]
+
+
+def test_duration_must_be_non_negative() -> None:
+    DatasetManifest.model_validate(_manifest_fields(duration_s=0.0))
+    with pytest.raises(ValidationError) as exc:
+        DatasetManifest.model_validate(_manifest_fields(duration_s=-1.0))
+    assert _error_types(exc) == [(("duration_s",), "greater_than_equal")]
+
+
+def test_scan_n_wn_and_n_spectra_lower_bounds() -> None:
+    for field, value in (("scan", ""), ("n_wn", 0), ("n_spectra", 0)):
+        with pytest.raises(ValidationError) as exc:
+            DatasetManifest.model_validate(_manifest_fields(**{field: value}))
+        assert [loc for loc, _ in _error_types(exc)] == [(field,)]
+
+
+def test_n_spectra_must_equal_grid_unless_partial() -> None:
+    grid = _grid_fields()
+    full = 50 * 25
+    DatasetManifest.model_validate(_manifest_fields(grid=grid, n_spectra=full))
+    for n_spectra in (full - 1, full + 1):
+        with pytest.raises(ValidationError, match="1250") as exc:
+            DatasetManifest.model_validate(_manifest_fields(grid=grid, n_spectra=n_spectra))
+        assert _error_types(exc) == [((), "n_spectra_grid_mismatch")]
+    partial = grid | {"allow_partial": True}
+    for n_spectra in (1, 25, full):
+        DatasetManifest.model_validate(_manifest_fields(grid=partial, n_spectra=n_spectra))
+    with pytest.raises(ValidationError) as exc:
+        DatasetManifest.model_validate(_manifest_fields(grid=partial, n_spectra=full + 1))
+    assert _error_types(exc) == [((), "n_spectra_exceeds_grid")]

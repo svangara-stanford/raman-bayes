@@ -473,6 +473,7 @@ Approved as a block on two conditions: each change is recorded in the DEVLOG ent
 |---|---|---|---|
 | `test_scan_info_is_marked_provisional` (test_dataset) | 02 | replaced by `test_scan_info_is_not_provisional` | finalized |
 | `axes`, `acqs`, `manifests` strategies (test_dataset) | 02 | generate only values the new validators accept (consistent axes, exposure > 0, n_spectra ≤ grid, duration ≥ 0) | P1 validators |
+| `test_manifest_rejects_unknown_nested_key` (test_dataset) | 02 | fixture grid `ny, nz` 1 → 2; assertion unchanged | P1 axis rule rejects the old fixture (1-point axes with step 1); approved 2026-11-02 |
 | `test_smoothing_spec_is_marked_provisional` (test_priors) | 08 | replaced by `test_smoothing_spec_is_not_provisional` | finalized |
 | `MODEL_KEYS` RunPlan and SubmissionRecord entries (test_run) | 10, 12 | new key sets per P3 and P4 | P3, P4 |
 | `PROVISIONAL` and `test_provisional_marker` (test_run) | 10, 12 | entries removed as each model is finalized; replaced by the `*_not_provisional` tests above. An empty parametrize would skip, so the test is deleted at 12 when its list is empty. | finalized |
