@@ -1,1 +1,1 @@
-"""Per-window preprocessing: clip, despike, baseline, smoothing, clamp, trim (Phase 1)."""
+"""Per-window preprocessing: clip, despike, baseline, smoothing, clamp, trim, noise estimate."""

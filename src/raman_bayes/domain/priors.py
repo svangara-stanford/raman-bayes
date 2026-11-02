@@ -112,7 +112,11 @@ class BaselineSpec(DomainModel):
 
 
 class SmoothingSpec(DomainModel):
-    """Provisional placeholder: §5 shows only ``smoothing: null``; parameters are not specified."""
+    """Savitzky-Golay smoothing over ``window`` channels (not cm^-1) with ``polyorder``.
+
+    Channels because the axis is not evenly spaced in cm^-1. Applied after baseline
+    subtraction in ``interp`` mode (§7.2); rules 7 and 8 bound ``window`` and ``polyorder``.
+    """
 
     method: Literal["savgol"]
     window: int

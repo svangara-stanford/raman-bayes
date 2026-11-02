@@ -23,7 +23,7 @@ class PreparedSpectrum:
     spectrum_id: int
     wavenumber: npt.NDArray[np.float64]
     intensity: npt.NDArray[np.float64]
-    noise_sd: float  # MAD of the residual of a 9-point median filter (§7.2)
+    noise_sd: float  # 1.4826 x MAD of the residual of a 9-point median filter (§7.2)
     qc_flags: int
 
 

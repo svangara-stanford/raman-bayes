@@ -234,6 +234,6 @@ def test_smoothing_rejects_unknown_key(raw: dict[str, Any]) -> None:
     assert exc.value.errors()[0]["loc"] == ("preprocessing", "smoothing", "deriv")
 
 
-def test_smoothing_spec_is_marked_provisional() -> None:
+def test_smoothing_spec_is_not_provisional() -> None:
     assert SmoothingSpec.__doc__ is not None
-    assert "provisional" in SmoothingSpec.__doc__.lower()
+    assert "provisional" not in SmoothingSpec.__doc__.lower()
