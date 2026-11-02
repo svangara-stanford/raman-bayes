@@ -28,6 +28,7 @@ __all__ = [
     "InfoFilenameError",
     "InfoValueError",
     "InputError",
+    "InvalidEngineError",
     "InvalidProfileError",
     "InvalidScanInfoError",
     "LegacyCsvError",
@@ -48,6 +49,7 @@ __all__ = [
     "SpectrumScanMismatchError",
     "StaleStatusError",
     "TimeSeriesNotSupportedError",
+    "UnknownEngineError",
     "UnknownProfileError",
     "UnknownRunError",
     "UnknownTaskError",
@@ -291,6 +293,24 @@ class DatasetStoreError(RamanBayesError):
 
     def __init__(self, path: Path, problem: str) -> None:
         super().__init__(f"{path}: {problem}")
+
+
+# ---------------------------------------------------------------- engines
+
+
+class UnknownEngineError(InputError):
+    """No installed engine has this name."""
+
+    def __init__(self, name: str, available: Sequence[str]) -> None:
+        installed = ", ".join(available) or "none"
+        super().__init__(f"no engine named {name!r}; installed engines: {installed}")
+
+
+class InvalidEngineError(InputError):
+    """An engine entry point does not provide a PeakEngine."""
+
+    def __init__(self, name: str, target: str) -> None:
+        super().__init__(f"engine {name!r} ({target}) does not provide a peak engine")
 
 
 # ---------------------------------------------------------------- legacy priors CSV

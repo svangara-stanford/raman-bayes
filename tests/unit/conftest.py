@@ -6,6 +6,8 @@ Helpers are fixtures because ``--import-mode=importlib`` makes conftest unimport
 
 import os
 import shutil
+import subprocess
+import zipfile
 from collections.abc import Callable
 from pathlib import Path
 
@@ -13,7 +15,8 @@ import pytest
 
 from raman_bayes.config.settings import PathsSettings
 
-FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
+ROOT = Path(__file__).resolve().parents[2]
+FIXTURES = ROOT / "tests" / "fixtures"
 MINI = FIXTURES / "nanofinder_mini" / "NMC811_v0"
 
 # Frame Dimentions edits that turn the real 50 x 25 grid into the 5 x 5 corner the mini fixture
@@ -70,3 +73,20 @@ def raman_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> PathsSetting
     monkeypatch.setenv("RAMAN_PATHS__CATALOG", str(paths.catalog))
     monkeypatch.chdir(tmp_path)
     return paths
+
+
+@pytest.fixture(scope="session")
+def wheel(tmp_path_factory: pytest.TempPathFactory) -> zipfile.ZipFile:
+    """Build the wheel once per session with hatchling, as CI's wheel-install job does."""
+    exe = shutil.which("hatchling")
+    assert exe is not None, "hatchling not on PATH; run via pixi"
+    out = tmp_path_factory.mktemp("dist")
+    subprocess.run(
+        [exe, "build", "-t", "wheel", "-d", str(out)],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        timeout=120,
+    )
+    (path,) = out.glob("raman_bayes-*.whl")
+    return zipfile.ZipFile(path)

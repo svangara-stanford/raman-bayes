@@ -1,12 +1,9 @@
 """Packaged default profile (DESIGN.md §2 Packaging, §9) and what the built wheel contains."""
 
-import shutil
-import subprocess
 import zipfile
 from importlib.resources import files
 from pathlib import Path
 
-import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -30,22 +27,6 @@ def test_local_profile_loads_via_importlib_resources() -> None:
     resource = files("raman_bayes.config").joinpath("profiles", "local.yaml")
     assert resource.is_file()
     assert yaml.safe_load(resource.read_text(encoding="utf-8")) == LOCAL_PROFILE
-
-
-@pytest.fixture(scope="module")
-def wheel(tmp_path_factory: pytest.TempPathFactory) -> zipfile.ZipFile:
-    exe = shutil.which("hatchling")
-    assert exe is not None, "hatchling not on PATH; run via pixi"
-    out = tmp_path_factory.mktemp("dist")
-    subprocess.run(
-        [exe, "build", "-t", "wheel", "-d", str(out)],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-        timeout=120,
-    )
-    (path,) = out.glob("raman_bayes-*.whl")
-    return zipfile.ZipFile(path)
 
 
 def test_wheel_contains_package_data(wheel: zipfile.ZipFile) -> None:
