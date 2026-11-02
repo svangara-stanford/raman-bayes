@@ -1,4 +1,4 @@
-"""The ``raman`` command tree (DESIGN.md §10). Phase 0: every command is a stub that exits 3.
+"""The ``raman`` command tree (DESIGN.md §10). Commands not built yet are stubs that exit 3.
 
 Help is plain Click (``rich_markup_mode=None``): Typer forces a Rich terminal when
 GITHUB_ACTIONS, FORCE_COLOR or PY_COLORS is set, which would put ANSI into piped ``--help``.
@@ -11,6 +11,7 @@ from typing import Annotated, NoReturn
 
 import typer
 
+from raman_bayes.app import validate
 from raman_bayes.cli.output import CliEnvelope, ExitCode, emit
 
 DEFAULT_PROFILE = "local"
@@ -126,7 +127,34 @@ def validate_priors(
     as_json: JsonOpt = False,
 ) -> None:
     """Validate a priors recipe; exit 2 on error."""
-    _stub("validate-priors", as_json)
+    result = validate.validate_priors_file(file)
+    if result.spec is None:
+        envelope = CliEnvelope(
+            command="validate-priors",
+            exit_code=ExitCode.VALIDATION,
+            ok=False,
+            message=f"{file}: invalid priors ({len(result.errors)} error(s))",
+            warnings=result.warnings,
+            errors=result.errors,
+        )
+    else:
+        spec = result.spec.spec
+        envelope = CliEnvelope(
+            command="validate-priors",
+            exit_code=ExitCode.OK,
+            ok=True,
+            message=f"{file}: valid {spec.name} {spec.version} ({spec.status}), "
+            f"priors_hash {result.priors_hash}",
+            data={
+                "priors_hash": result.priors_hash,
+                "name": spec.name,
+                "version": spec.version,
+                "status": spec.status,
+            },
+            warnings=result.warnings,
+        )
+    emit(envelope, as_json=as_json, warnings_to_stderr=True)
+    raise typer.Exit(code=envelope.exit_code)
 
 
 @priors_app.command("import-csv")

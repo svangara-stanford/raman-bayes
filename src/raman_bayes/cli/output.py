@@ -65,16 +65,27 @@ def make_console(stream: TextIO) -> Console:
     return Console(file=stream, force_terminal=stream.isatty(), highlight=False)
 
 
-def emit(envelope: CliEnvelope, *, as_json: bool) -> None:
-    """Write ``envelope``: one JSON line on stdout, or Rich text (stdout for 0/3, else stderr)."""
+def emit(envelope: CliEnvelope, *, as_json: bool, warnings_to_stderr: bool = False) -> None:
+    """Write ``envelope``: one JSON line on stdout, or Rich text (stdout for 0/3, else stderr).
+
+    In text mode, ``warnings_to_stderr`` sends warning lines to stderr even on success (on
+    failure everything goes there already); under ``--json`` warnings are in the envelope only.
+    """
     if as_json:
         typer.echo(envelope.model_dump_json())
         return
     ok = envelope.exit_code in (ExitCode.OK, ExitCode.NOTHING_TO_DO)
-    console = make_console(sys.stdout if ok else sys.stderr)
     style = _STYLE[envelope.exit_code]
-    lines = [envelope.message] if envelope.message is not None else []
-    lines += [f"warning: {w}" for w in envelope.warnings]
-    lines += [f"error: {e}" for e in envelope.errors]
+    message = [envelope.message] if envelope.message is not None else []
+    warnings = [f"warning: {w}" for w in envelope.warnings]
+    errors = [f"error: {e}" for e in envelope.errors]
+    if ok and warnings_to_stderr:
+        _print(sys.stderr, warnings, _STYLE[ExitCode.NOTHING_TO_DO])
+        warnings = []
+    _print(sys.stdout if ok else sys.stderr, [*message, *warnings, *errors], style)
+
+
+def _print(stream: TextIO, lines: list[str], style: str) -> None:
+    console = make_console(stream)
     for line in lines:
         console.print(line, style=style, markup=False, soft_wrap=True)

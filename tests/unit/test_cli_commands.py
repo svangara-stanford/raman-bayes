@@ -1,4 +1,4 @@
-"""The §10 command surface: all 18 commands registered as Phase 0 stubs that exit 3."""
+"""The §10 command surface: all 18 commands registered; those not built yet are stubs (exit 3)."""
 
 import json
 from pathlib import Path
@@ -47,6 +47,9 @@ COMMANDS: dict[str, list[str]] = {
     "doctor": ["doctor"],
 }
 NAMES = list(COMMANDS)
+# Commands built so far; each one has its own test module.
+IMPLEMENTED = {"validate-priors"}
+STUBS = [name for name in NAMES if name not in IMPLEMENTED]
 
 runner = CliRunner()
 
@@ -94,7 +97,7 @@ def test_root_help_lists_top_level_commands() -> None:
 # ---------------------------------------------------------------- every command
 
 
-@pytest.mark.parametrize("name", NAMES)
+@pytest.mark.parametrize("name", STUBS)
 def test_stub_exits_nothing_to_do(name: str) -> None:
     result = runner.invoke(app, COMMANDS[name])
     assert result.exit_code == ExitCode.NOTHING_TO_DO, result.output
@@ -104,7 +107,7 @@ def test_stub_exits_nothing_to_do(name: str) -> None:
     _assert_no_repo_refs(result.output)
 
 
-@pytest.mark.parametrize("name", NAMES)
+@pytest.mark.parametrize("name", STUBS)
 def test_stub_json_envelope(name: str) -> None:
     result = runner.invoke(app, [*COMMANDS[name], "--json"])
     assert result.exit_code == ExitCode.NOTHING_TO_DO, result.output
@@ -132,8 +135,10 @@ def test_help_lists_shared_options(name: str) -> None:
 
 @pytest.mark.parametrize("name", NAMES)
 def test_profile_is_accepted(name: str) -> None:
+    # Not a Click usage error: under --json a parsed command always writes one envelope.
     result = runner.invoke(app, [*COMMANDS[name], "--profile", "sherlock", "--json"])
-    assert result.exit_code == ExitCode.NOTHING_TO_DO, result.output
+    (line,) = result.stdout.splitlines()
+    assert CliEnvelope.model_validate_json(line).command == name, result.output
 
 
 # ---------------------------------------------------------------- specific options

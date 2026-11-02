@@ -1,18 +1,52 @@
 """Priors recipe models (DESIGN.md §5). Key names follow ``priors.yaml`` exactly.
 
-Structure only: the §5 validation rules 1-9 arrive in Phase 1. Unknown keys (including the
-reserved ``derived:`` section) are rejected by ``extra="forbid"``, and named choices are
-``Literal``s holding the v1 vocabulary.
+Structure and the named hyperparameter rules; the §5 validation rules are in
+``priors_rules``. Unknown keys (including the reserved ``derived:`` section) are rejected by
+``extra="forbid"``, and named choices are ``Literal``s holding the v1 vocabulary.
 """
 
+from collections.abc import Callable
 from typing import Literal
 
 from raman_bayes.domain._base import DomainModel
 
+__all__ = [
+    "SD_RULES",
+    "BaselineSpec",
+    "Bounds",
+    "CenterDefault",
+    "CenterPrior",
+    "Defaults",
+    "DespikeSpec",
+    "EndMember",
+    "FwhmDefault",
+    "FwhmPrior",
+    "LikelihoodSpec",
+    "Peak",
+    "PreprocessingSpec",
+    "PresenceDefault",
+    "PriorsSpec",
+    "SdRule",
+    "SmoothingSpec",
+    "SpecMeta",
+    "Window",
+    "center_sd",
+    "quarter_range",
+]
+
 Bounds = tuple[float, float]
 
-# Named hyperparameter rules. ``quarter_range``: sd = (upper - lower) / 4 unless the peak sets sd.
 SdRule = Literal["quarter_range"]
+
+
+def quarter_range(bounds: Bounds) -> float:
+    """Return ``(upper - lower) / 4``: a quarter of the range the bounds span."""
+    lower, upper = bounds
+    return (upper - lower) / 4
+
+
+# Every named rule a priors file may cite; the keys are exactly the SdRule vocabulary.
+SD_RULES: dict[SdRule, Callable[[Bounds], float]] = {"quarter_range": quarter_range}
 
 
 class SpecMeta(DomainModel):
@@ -145,3 +179,10 @@ class PriorsSpec(DomainModel):
     preprocessing: PreprocessingSpec
     end_members: tuple[EndMember, ...]
     windows: tuple[Window, ...]
+
+
+def center_sd(peak: Peak, rule: SdRule) -> float:
+    """Return the sd of ``peak``'s center prior: its ``sd`` if set, else ``rule`` of its bounds."""
+    if peak.center.sd is not None:
+        return peak.center.sd
+    return SD_RULES[rule](peak.center.bounds)
