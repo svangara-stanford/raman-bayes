@@ -1,4 +1,4 @@
-# raman-bayes — Design Brief (v0.6, 2026-10-29, adversarially reviewed)
+# raman-bayes — Design Brief (v0.7, 2026-11-02, adversarially reviewed)
 
 **Status:** approved for Phase 0–2 implementation. The package is a plain PyPI wheel (§2 Packaging). Engine, GUI, MCP, LLM helpers, Globus commands and derived quantities are out of scope. §16 records what was reviewed and why.
 
@@ -97,7 +97,7 @@ NMC811-Exported-Data/
 NMC111-Exported-Data/{NMC111_v1, NMC111_v2}                             (50×50 each)
 ```
 
-**Spectrum file.** 1024 lines of `shift_cm1 \t intensity`, no header, no NaN column. Line endings are CRLF in the samples; the reader accepts LF or CRLF. Number formatting varies between scans (NMC111 files are 19920–19922 or 20944 bytes), so parse with `np.loadtxt`/`np.genfromtxt`, never by fixed width. Intensities are raw accumulated CCD counts. The axis in the samples is −41.55539 … 1945.85360 cm⁻¹, identical across scans, but the reader reads the axis from every file and checks it against the dataset axis (tolerance 0.05 cm⁻¹); a mismatch sets `qc_flags.axis_mismatch` and ingest fails unless `--allow-axis-mismatch`.
+**Spectrum file.** 1024 lines of `shift_cm1 \t intensity`, no header, no NaN column. Line endings are CRLF in the samples; the reader accepts LF or CRLF. Number formatting varies between scans (NMC111 files are 19920–19922 or 20944 bytes), so each line is split on whitespace, never read by fixed width. The reader parses the lines itself rather than with `np.loadtxt`, whose errors number rows inconsistently, so an error names the file and the 1-based line. Intensities are raw accumulated CCD counts. The axis in the samples is −41.55539 … 1945.85360 cm⁻¹, identical across scans, but the reader reads the axis from every file and checks it against the dataset axis (tolerance 0.05 cm⁻¹); a mismatch sets `qc_flags.axis_mismatch` and ingest fails unless `--allow-axis-mismatch`.
 
 **Filename grammar.** `<scan>-z<iz>y<iy>x<ix>.txt`, unpadded integer **grid indices**.
 ```python
@@ -199,7 +199,7 @@ class DatasetManifest(ScanInfo):
     schema_version: str = "1.0"
     dataset_id: str
     sample: str | None           # --sample
-    n_spectra: int               # files found; >= 1, and == nx·ny·nz unless grid.allow_partial
+    n_spectra: int               # files found; >= 1; == nx·ny·nz, or <= it when grid.allow_partial
     filename_pattern: FilenamePattern = FilenamePattern()   # .regex defaults to FILENAME_RE
     content_hash: str
     created_at: AwareDatetime    # pipeline-generated, written in UTC; naive values rejected
@@ -251,8 +251,8 @@ windows:
 Every hyperparameter is either a literal or a named rule defined in `domain/priors.py` (`quarter_range` is the only rule in v1). No value may be the string `auto`. `derived:` is reserved for Phase 3 and rejected by the v1 validator.
 
 **Validation rules** (`raman validate-priors`, exit 2 on error, warnings to stderr):
-1. `schema_version` known; ids match `^[a-z][a-z0-9_]{0,31}$`, unique across the file.
-2. Each peak's `center.bounds` inside its window's `range_cm1`; warn if within `fwhm.bounds[0]` of an edge.
+1. `schema_version` known; ids match `^[a-z][a-z0-9_]{0,31}$` as a whole string, and are unique within their kind across the file: window ids among windows, peak ids across all windows, end-member ids among end members. A window and an end member may share an id (`carbon` above).
+2. Each peak's `center.bounds` inside its window's `range_cm1`; warn if either center bound is less than `fwhm.bounds[0]` from the window edge.
 3. `lower < upper` for all bounds; `center.mean` inside `center.bounds`; FWHM bounds > 0; `fwhm.bounds[1]` ≤ window width.
 4. Windows must not overlap unless both set `allow_overlap: true`.
 5. Overlapping center bounds inside one window → warning unless `ordered: true`.
@@ -260,6 +260,8 @@ Every hyperparameter is either a literal or a named rule defined in `domain/prio
 7. `preprocessing.margin_cm1 ≥ 0`; `despike.kernel` odd; when `smoothing` is set, `smoothing.window` is odd and ≥ 3 and `0 ≤ smoothing.polyorder < smoothing.window`.
 8. At plan time: each window (without margin) covers ≥ 32 channels on the dataset axis; window ∪ margin lies within the axis; when `smoothing` is set, window ∪ margin covers ≥ `smoothing.window` channels.
 9. `priors_hash = sha256(canonical_json(parsed_model))`.
+
+"Inside" includes the bounds (rules 2, 3). Overlap is of open intervals, so ranges that only touch do not overlap (rules 4, 5). Every rule reports every violation it finds, not only the first.
 
 **Legacy CSV I/O.** `raman priors import-csv FILE --window-id W --range LO HI` → YAML fragment. Strip UTF-8 BOM (`nmc_lithiation.csv` has one), accept LF/CRLF, map `x (center)`→`center.mean`, limits→bounds. `export-csv` writes header `,x (center),x (lower limit),x (upper limit),FWHM (lower limit),FWHM (upper limit)` with LF, no BOM. Round-trip test on both committed CSVs.
 
@@ -365,7 +367,7 @@ Preprocessing is `priors.preprocessing`; there is no separate field. `run-task` 
 
 ### 7.2 `raman run-task --run RUN --task N`
 The single entry point every backend executes.
-1. Acquire `shards/task=N/_LOCK` (JSON: host, pid, started_at; `O_EXCL` create). If present and younger than `lock_stale_minutes` (default 30), exit 3 "already running". If stale, overwrite.
+1. Acquire `shards/task=N/_LOCK` (JSON: host, pid, started_at; `O_EXCL` create). If present and younger than `lock_stale_minutes` (the profile's `slurm.lock_stale_minutes`; 30 when unset or when the profile has no `slurm` section, as on local profiles), exit 3 "already running". If stale, overwrite.
 2. Load the task's slice of the Zarr.
 3. For each window: **clip to `range ± margin_cm1` → despike → baseline → smoothing → clamp → trim margin → noise_sd = MAD(residual of a 9-point median filter)**. Spectra with `nan_or_inf` or `saturated` flags get `status="skipped_qc"` without fitting.
 4. `fit_many` in sub-batches of 512 spectra. Sub-batch `k` (zero-padded to 3 digits) is written as two files, `fits-<k>.parquet` (FITS_SCHEMA) and then `peaks-<k>.parquet` (PEAKS_SCHEMA), each via write `.tmp` → `fsync` → `os.replace`. A sub-batch is valid only when both files exist, read back with their explicit schemas and hold the expected rows: one fits row per spectrum × window, one peaks row per spectrum × window × peak. Otherwise both files are rewritten. Existing valid sub-batches are skipped on restart (resume).
@@ -427,6 +429,8 @@ The legal transitions are exactly these; `catalog.py` raises on any other, inclu
 | failed | submitted | `submit --resubmit-failed` |
 | complete | collected | `collect` |
 | planned, submitted, running, failed | cancelled | `cancel` |
+
+"Pending or running" means task status `PENDING` or `RUNNING`. `TIMEOUT`, `OUT_OF_MEMORY`, `PREEMPTED`, `CANCELLED` and `UNKNOWN` count as stopped, so a run whose unfinished tasks are all in those states moves to `failed`. Phase 2 revisits this for Slurm's own requeue after preemption.
 
 The CLI driver refreshes a run by merging `poll` into the `task` rows and then applying these transitions in order, possibly several in one refresh (submitted → running → complete). `submit --resubmit-failed` on a `running` run resubmits without changing the run status. It resubmits only tasks with no `_DONE.json` and refuses (exit 2) a task that has used its 3 attempts. `collect --partial` changes no status. `collected` and `cancelled` are terminal.
 
@@ -506,13 +510,15 @@ task(run_id, task_index, spec_start, spec_stop, status, attempts, slurm_job_id, 
      PRIMARY KEY(run_id, task_index))
 ```
 `run.status` holds a `RunStatus` value and `task.status` a `TaskStatus` value (§7.4). `plan` creates the `task` rows; after that only a refresh from `poll` updates them.
-Rollback journal (not WAL) on Sherlock. `raman runs import DIR` registers a run folder copied from elsewhere.
+Rollback journal (not WAL) on every machine; `PRAGMA user_version = 1`, and a catalog with another version is refused; 30 s busy timeout; every write is one `BEGIN IMMEDIATE` transaction. Reading a catalog that does not exist creates nothing; the first write creates it and its parent directories. `raman runs import DIR` registers a run folder copied from elsewhere.
+
+Constraints: every column is `NOT NULL` except `dataset.sample`, `run.git_sha`, `run.completed_at`, `run.result_uri`, and `task.slurm_job_id`, `n_ok`, `n_failed`, `error`. Foreign keys: `run.dataset_id → dataset`, `run.priors_hash → priors_spec`, `task.run_id → run`. `CHECK` constraints limit `run.status`, `task.status` and `priors_spec.status` to their enum values. Times are ISO 8601 text with a UTC offset. `completed_at` is set when a run enters `complete`.
 
 ## 9. Configuration
 
-Pydantic Settings. Precedence: defaults < profile YAML < `RAMAN_*` env < CLI flags. `--profile` (or `RAMAN_PROFILE`) is a **name** or a **path**. A name resolves first to the packaged `raman_bayes/config/profiles/<name>.yaml`, then to `./configs/profiles/<name>.yaml`; a path is used as given. Default is `local`. Resolved config is frozen into `run_plan.json`.
+Pydantic Settings. Precedence: defaults < profile YAML < `RAMAN_*` env < CLI flags. `--profile` (or `RAMAN_PROFILE`) is a **name** or a **path**: a value that contains a path separator or ends in `.yaml`/`.yml` is a path, used as given relative to the working directory; anything else is a name, which resolves first to the packaged `raman_bayes/config/profiles/<name>.yaml`, then to `./configs/profiles/<name>.yaml`. `--profile` wins over `RAMAN_PROFILE`; with neither, the profile is `local`. Resolved config is frozen into `run_plan.json`.
 
-Profiles are validated strictly: an unknown key is an error naming it. A `RAMAN_*` variable names a settings key in upper case, with `__` between levels (`RAMAN_LOCAL__WORKERS=4`, `RAMAN_PATHS__RUNS_ROOT=/tmp/runs`); `RAMAN_PROFILE` selects the profile. Relative `paths.*` values resolve against the working directory at load time. `resolved_config` in `run_plan.json` is the settings model dumped to JSON after precedence and `${VAR}` expansion, with every path absolute, plus a `profile_source` key (`package:<name>.yaml` or the absolute file path).
+Profiles are validated strictly: an unknown key is an error naming it. A `RAMAN_*` variable names a settings key in upper case, with `__` between levels (`RAMAN_LOCAL__WORKERS=4`, `RAMAN_PATHS__RUNS_ROOT=/tmp/runs`); `RAMAN_PROFILE` selects the profile. Relative `paths.*` values resolve against the working directory at load time. `resolved_config` in `run_plan.json` is the settings model dumped to JSON after precedence and `${VAR}` expansion, with every path absolute, plus a `profile_source` key (`package:<name>.yaml` or the absolute file path). Keys a profile omits take these defaults: `backend: local`, `local.workers: 1`, `engine.name: mock`, `slurm.lock_stale_minutes: 30`; `slurm` and `limits` are absent unless given, and `backend: slurm_array` requires a `slurm` section.
 
 **`${VAR}` expansion:** only `${NAME}` syntax, expanded at load time, in profile values only (`RAMAN_*` values are used literally); an unset variable is a hard error naming the variable and the profile key. Sherlock sets `SCRATCH` and `GROUP_HOME`; **Oak is not an environment variable**, so `archive_root` is a literal path you fill in.
 
@@ -647,6 +653,7 @@ For each sub-step: failing tests first, then implementation; stop with a five-li
 
 ## 16. Review log
 
+- v0.6 → v0.7: Phase 1 batch A clarifications, no design change: spectrum lines parsed per line, not with `np.loadtxt` (§3); `n_spectra ≤ nx·ny·nz` under `allow_partial` (§4); ids unique within their kind, "inside" inclusive, overlap of open intervals (§5); `lock_stale_minutes` for local runs (§7.2); in-flight task statuses for `failed` (§7.4); catalog constraints and A16 pragmas (§8.5); profile name-vs-path rule, `--profile` over `RAMAN_PROFILE` over `local`, settings defaults (§9).
 - v0.5 → v0.6: Phase 1 models finalized: ScanInfo and DatasetManifest (§3, §4), SmoothingSpec (§5, §7.2), RunConfig, RunPlan and settings details (§7.1, §9), TaskState, SubmissionRecord and the explicit transition table (§7.4, §8.5); shards are two files per sub-batch, fits before peaks (§7.2, §8.1).
 - v0.4 → v0.5: §11 asserts n_accum per file (1, 5, 5, 5, 10), confirmed against the raw Info.txt files; §3 Info.txt layout corrected from the real files; §5 rule 8 is plan-time (unchanged, clarified in Phase 1 plan).
 
