@@ -86,6 +86,10 @@ def noise_sd(y: Signal) -> float:
 
     The running median follows peaks and baseline, so the residual is mostly noise. Ends use
     ``mode="nearest"``. A constant ``y`` gives 0.
+
+    On white noise of sd sigma this reads about 0.864 sigma, not sigma: the median of 9 is one
+    of the 9, so about 1 residual in 9 is exactly 0, which pulls the MAD down. Kept as decided
+    for Phase 1 (B3); to be revisited when the real engine defines the noise it needs.
     """
     residual = y - median_filter(y, size=NOISE_FILTER_CHANNELS, mode="nearest")
     return float(median_abs_deviation(residual, scale="normal"))
