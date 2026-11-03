@@ -168,6 +168,33 @@ def test_one_failed_scan_does_not_stop_the_others(
     assert second.status is ScanStatus.FAILED
 
 
+def test_cli_one_failed_scan_exits_2_and_reports_every_scan(
+    mini_scan: Path, raman_paths: PathsSettings, replace_once: ReplaceOnce
+) -> None:
+    broken = _copy_as(mini_scan, "NMC811_v9")
+    replace_once(
+        broken / "NMC811_v9-Info.txt",
+        b"Spectral series number (maximum) : 1",
+        b"Spectral series number (maximum) : 2",
+    )
+    result = runner.invoke(app, ["ingest", str(mini_scan.parent), "--allow-partial-grid", "--json"])
+    assert result.exit_code == ExitCode.VALIDATION
+    env = CliEnvelope.model_validate_json(result.stdout)
+    assert (env.exit_code, env.ok) == (ExitCode.VALIDATION, False)
+    assert env.data is not None
+    good, bad = env.data["scans"]
+    assert (good["status"], bad["status"]) == ("ingested", "failed")
+    assert good["dataset_id"].startswith("NMC811_v0-")
+    assert Path(good["store_uri"]).is_dir()
+    assert (bad["dataset_id"], bad["store_uri"], bad["manifest"]) == (None, None, None)
+    assert bad["errors"]
+    assert "time series" in bad["errors"][0]
+    assert env.errors == tuple(bad["errors"])
+    assert [row.dataset_id for row in Catalog(raman_paths.catalog).list_datasets()] == [
+        good["dataset_id"]
+    ]
+
+
 def test_dry_run_reports_and_writes_nothing(mini_scan: Path, raman_paths: PathsSettings) -> None:
     outcome = _one(_partial(mini_scan, dry_run=True), raman_paths)
     assert outcome.status is ScanStatus.DRY_RUN, outcome.errors
