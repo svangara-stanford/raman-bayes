@@ -1,4 +1,4 @@
-# raman-bayes — Design Brief (v0.7, 2026-11-02, adversarially reviewed)
+# raman-bayes — Design Brief (v0.8, 2026-11-03, adversarially reviewed)
 
 **Status:** approved for Phase 0–2 implementation. The package is a plain PyPI wheel (§2 Packaging). Engine, GUI, MCP, LLM helpers, Globus commands and derived quantities are out of scope. §16 records what was reviewed and why.
 
@@ -32,22 +32,28 @@ raman-bayes/
 │   ├── domain/        # Pydantic models + validation. No I/O.
 │   │   ├── priors.py         PriorsSpec, Window, Peak, EndMember
 │   │   ├── dataset.py        DatasetManifest, ScanInfo, GridSpec
+│   │   ├── qc.py             per-spectrum QC flag bits; QCCounts summary
 │   │   ├── run.py            RunConfig, RunPlan, TaskSpec, RunStatus, TaskStatus, TaskState, SubmissionRecord
+│   │   ├── uuid7.py          UUIDv7 run ids (until the minimum Python has uuid.uuid7)
 │   │   └── results.py        PeakPosterior, WindowFitResult, PosteriorSummary, PEAKS_SCHEMA, FITS_SCHEMA
 │   ├── ports/         # typing.Protocol: PeakEngine, ExecutionBackend
 │   ├── io/
 │   │   ├── nanofinder.py     section-aware Info.txt parser + two-column spectrum reader
 │   │   ├── filename.py       index regex parser
+│   │   ├── scan_folder.py    scan-folder discovery and listing; grid layout of the files
 │   │   └── legacy_csv.py     import/export of the old priors CSV format
 │   ├── storage/
 │   │   ├── zarr_dataset.py   write/read dataset.zarr
 │   │   ├── shards.py         atomic Parquet shard writer, _LOCK/_DONE markers
 │   │   ├── merge.py          shards -> results/*.parquet
 │   │   └── catalog.py        SQLite catalog (single writer) + RunStatus transitions
-│   ├── preprocessing/        clip(with margin), despike (median/MAD), ALS baseline, savgol, trim
+│   ├── preprocessing/
+│   │   ├── steps.py          despike, ALS baseline, savgol, clamp, noise_sd
+│   │   └── prepare.py        clip (with margin) → steps → trim, per window
 │   ├── engine/
 │   │   ├── registry.py       entry-point discovery
-│   │   └── mock.py           MockEngine (deterministic, microseconds)
+│   │   ├── mock.py           MockEngine (deterministic, microseconds)
+│   │   └── seeding.py        per-fit SeedSequence derivation
 │   ├── orchestration/
 │   │   ├── chunking.py       spectra -> task ranges
 │   │   ├── local.py          LocalBackend (ProcessPoolExecutor, spawn)
@@ -59,6 +65,7 @@ raman-bayes/
 │   │   └── profiles/local.yaml   # packaged default profile (importlib.resources)
 │   ├── logging.py     # stdlib logging setup (console + per-task file)
 │   └── cli/           # Typer + Rich; every command has --json; calls app/ only
+│       └── reports.py        text-mode reports (--json carries the same results as data)
 ├── schemas/           # JSON schemas generated from Pydantic (priors, manifest, cli outputs)
 ├── configs/
 │   ├── profiles/{labpc.yaml, sherlock.yaml}   # site profiles, repo-level; local.yaml is packaged
@@ -96,8 +103,9 @@ NMC811-Exported-Data/
 └── NMC811_v2/  …                                                      (50×50 = 2500)
 NMC111-Exported-Data/{NMC111_v1, NMC111_v2}                             (50×50 each)
 ```
+A scan folder holds exactly one `<scan>-Info.txt` and is named after the scan. Hidden files are skipped; other files that are not spectra are ignored with a warning.
 
-**Spectrum file.** 1024 lines of `shift_cm1 \t intensity`, no header, no NaN column. Line endings are CRLF in the samples; the reader accepts LF or CRLF. Number formatting varies between scans (NMC111 files are 19920–19922 or 20944 bytes), so each line is split on whitespace, never read by fixed width. The reader parses the lines itself rather than with `np.loadtxt`, whose errors number rows inconsistently, so an error names the file and the 1-based line. Intensities are raw accumulated CCD counts. The axis in the samples is −41.55539 … 1945.85360 cm⁻¹, identical across scans, but the reader reads the axis from every file and checks it against the dataset axis (tolerance 0.05 cm⁻¹); a mismatch sets `qc_flags.axis_mismatch` and ingest fails unless `--allow-axis-mismatch`.
+**Spectrum file.** 1024 lines of `shift_cm1 \t intensity`, no header, no NaN column. Line endings are CRLF in the samples; the reader accepts LF or CRLF. Number formatting varies between scans (NMC111 files are 19920–19922 or 20944 bytes), so each line is split on whitespace, never read by fixed width. The reader parses the lines itself rather than with `np.loadtxt`, whose errors number rows inconsistently, so an error names the file and the 1-based line. Intensities are raw accumulated CCD counts. The axis in the samples is −41.55539 … 1945.85360 cm⁻¹, identical across scans, but the reader reads the axis from every file and checks it against the dataset axis, which is the first spectrum's in raster order (tolerance 0.05 cm⁻¹); a mismatch sets `qc_flags.axis_mismatch` and ingest fails unless `--allow-axis-mismatch`.
 
 **Filename grammar.** `<scan>-z<iz>y<iy>x<ix>.txt`, unpadded integer **grid indices**.
 ```python
@@ -166,7 +174,7 @@ class ScanInfo:
 - Keys not in the table are ignored. A missing required key is an error naming its section and key. The parser refuses `n_series ≠ 1` (rule 5) before building ScanInfo; the model rejects it too.
 - Every spectrum file must have exactly `n_wn` rows; otherwise ingest fails naming the file.
 
-**QC flags (uint16 bits):** 0 `nan_or_inf`, 1 `saturated`, 2 `axis_mismatch`, 3 `negative`. Saturation threshold = `acq.n_accum × 65535` (the Andor DU920P is 16-bit and counts are accumulated), **or** ≥ 3 consecutive identical samples at the spectrum maximum (flat top). Either condition sets the bit.
+**QC flags (uint16 bits):** 0 `nan_or_inf`, 1 `saturated`, 2 `axis_mismatch`, 3 `negative`. Saturation threshold = `acq.n_accum × 65535` (the Andor DU920P is 16-bit and counts are accumulated), **or** ≥ 3 consecutive identical samples at the spectrum maximum (flat top). Either condition sets the bit. NaN or ±inf sets only `nan_or_inf`; saturation and `negative` (any finite count < 0) look only at the finite samples.
 
 **Partial grids.** `grid.allow_partial` (manifest, default false; CLI `--allow-partial-grid`). When true, missing positions are recorded in `grid_mask` (bool `[nz, ny, nx]`) and `n_spectra` is the number of files found. Duplicates and files outside the grid are always errors.
 
@@ -189,6 +197,8 @@ Zarr v3, sharded, flat layout (spectra as rows). Pin `zarr>=3.0,<4`.
 
 Float32 is exact for integer counts < 2²⁴ (16.7 M); ingest asserts no count exceeds this.
 
+**Codecs and chunks.** "zstd-3 + shuffle" is Blosc(`cname="zstd"`, `clevel=3`, byte shuffle) on `intensity`; the other arrays use zarr's default codec. The per-spectrum 1-D arrays are chunked 1024 rows, like `intensity`.
+
 **`dataset_id`** = `<scan>-<first 10 hex of BLAKE3(intensity bytes ‖ wavenumber bytes ‖ sorted source_file list)>`, computed **from the written arrays**, not from the raw files. Ingest is idempotent: an existing id → log and skip (exit 3). Raw files are not copied; `--archive` tars them to `archive_root` on Sherlock.
 
 `content_hash` is the full BLAKE3 hex digest (64 characters) of `intensity` as little-endian float32 bytes in C order, then `wavenumber` as little-endian float64 bytes, then the sorted `source_file` values joined with `\n` and UTF-8 encoded. `source_file` holds basenames, not paths, so the hash does not depend on where the raw files were. `dataset_id = f"{scan}-{content_hash[:10]}"`. The same digest is `dataset_hash` in `run_plan.json` and `content_hash` in the catalog.
@@ -204,7 +214,7 @@ class DatasetManifest(ScanInfo):
     content_hash: str
     created_at: AwareDatetime    # pipeline-generated, written in UTC; naive values rejected
 ```
-The top-level `content_hash` and `created_at` attrs repeat the manifest's values, and the reader checks that they agree.
+The top-level `content_hash` and `created_at` attrs repeat the manifest's values. The reader refuses a store whose `schema_version` is unknown or whose attrs disagree with its manifest.
 
 ## 5. Priors recipe: `priors.yaml`
 
@@ -323,14 +333,14 @@ class WindowFitResult:
 
 **Seeding.** `SeedSequence(run_seed, spawn_key=(window_index, spectrum_id))`. Independent of chunking and retries.
 
-**MockEngine (`mock`, version `0.1.0`).** Per peak: center = argmax within `center.bounds`; fwhm = midpoint of bounds; area = sum within bounds × channel width; height = max within bounds; eta = 0.5; `presence_prob = sigmoid((height / noise_sd − 3) / 2)` plus seeded N(0, 0.02) jitter clipped to [0, 1] — scale-free so NMC111 and NMC811 behave alike; sd = 5% of value; q025/q975 = ±1.96 sd. Peaks with `presence_prob < 0.5` return `None` summaries. Deterministic for a given seed.
+**MockEngine (`mock`, version `0.1.0`).** Per peak: center = argmax within `center.bounds`; fwhm = midpoint of bounds; area = sum within bounds × channel width; height = max within bounds; eta = 0.5; `presence_prob = sigmoid((height / noise_sd − 3) / 2)` plus seeded N(0, 0.02) jitter clipped to [0, 1] — scale-free so NMC111 and NMC811 behave alike; sd = 5% of value; q025/q975 = ±1.96 sd. Peaks with `presence_prob < 0.5` return `None` summaries. `at_bound_frac` is None, `diagnostics` is empty and `runtime_s` is measured. A peak whose `center.bounds` contain no channel makes the whole window fit `failed`. Deterministic for a given seed.
 
 Engines are discovered via the `raman_bayes.engines` entry-point group.
 
 ## 7. Orchestration
 
 ### 7.1 Chunking and plan
-`raman plan` builds a **RunConfig** from its flags and the resolved settings (§9) and turns it into a **RunPlan**. It applies §5 rule 8 against the dataset axis (exit 2 on failure), writes `runs/<run_id>/run_plan.json` (frozen) and creates the catalog `run` row with status `planned` plus one `task` row per task (`pending`, 0 attempts).
+`raman plan` builds a **RunConfig** from its flags and the resolved settings (§9) and turns it into a **RunPlan**. It applies §5 rule 8 against the dataset axis (exit 2 on failure), writes `runs/<run_id>/run_plan.json` (frozen) and creates the catalog `run` row with status `planned` plus one `task` row per task (`pending`, 0 attempts). A dataset whose store is missing or disagrees with the catalog exits 4. `run.git_sha` is null at plan time; provenance comes from the `_DONE.json` markers at collect.
 
 ```python
 class RunConfig:                 # the request, before resolution
@@ -363,7 +373,7 @@ class RunPlan:                   # run_plan.json
 ```
 Preprocessing is `priors.preprocessing`; there is no separate field. `run-task` reads only `run_plan.json` and the Zarr store, never the catalog, the profile or the priors file. It exits 4 if the installed engine's version differs from `engine_version`.
 
-**Tasks.** With `s = spectra_per_task`, task k covers spectra `[k·s, min((k+1)·s, n_spectra))`. RunPlan rejects tasks that are not this contiguous, ordered partition of `0..n_spectra`. `--spectra-per-task` is used as given (the fixture tests use 8, 16 and 1024). Otherwise `s` is derived and rounded up to a multiple of 1024 (one Zarr chunk), so boundaries are multiples of 1024 except the last. On `slurm_array`, `s` comes from a 20-fit benchmark targeting `slurm.target_task_minutes` (Phase 2); on `local` it is `ceil(n_spectra / local.workers)`. A derived `s` is raised until the plan has at most `slurm.max_array_tasks` tasks; an explicit `s` that would exceed the cap is refused (exit 2). `local` has no cap. `run_id` is a UUIDv7 (RFC 9562), implemented in-package until the minimum Python has `uuid.uuid7` (3.14).
+**Tasks.** With `s = spectra_per_task`, task k covers spectra `[k·s, min((k+1)·s, n_spectra))`. RunPlan rejects tasks that are not this contiguous, ordered partition of `0..n_spectra`. `--spectra-per-task` is used as given (the fixture tests use 8, 16 and 1024). Otherwise `s` is derived and rounded up to a multiple of 1024 (one Zarr chunk), so boundaries are multiples of 1024 except the last. On `slurm_array`, `s` comes from a 20-fit benchmark targeting `slurm.target_task_minutes` (Phase 2; until then `plan` on `slurm_array` requires `--spectra-per-task`, exit 2); on `local` it is `ceil(n_spectra / local.workers)`. A derived `s` is raised until the plan has at most `slurm.max_array_tasks` tasks; an explicit `s` that would exceed the cap is refused (exit 2). `local` has no cap. `run_id` is a UUIDv7 (RFC 9562), implemented in-package until the minimum Python has `uuid.uuid7` (3.14). It uses the RFC's §6.2 method-2 counter: 48-bit Unix milliseconds, version 7, then a 74-bit counter that starts at a random 73-bit value in each new millisecond and adds one otherwise, so ids from one process strictly increase even if the clock stalls or steps back.
 
 ### 7.2 `raman run-task --run RUN --task N`
 The single entry point every backend executes.
@@ -379,6 +389,12 @@ Per-spectrum exceptions become `status="failed"` rows with the message. Non-zero
 smoothing: {method: savgol, window: 11, polyorder: 3}
 ```
 `SmoothingSpec` (`domain/priors.py`) has exactly these three keys. `method` is `savgol`, the only method in v1. `window` counts **channels**, not cm⁻¹, because the axis is not evenly spaced in cm⁻¹ (1.72–2.19 cm⁻¹ per channel in the samples). The step is `scipy.signal.savgol_filter(y, window, polyorder, deriv=0, mode="interp")`, applied after baseline subtraction to the clipped segment (window ± margin), so edge effects fall in the margin that trim removes. §5 rules 7 and 8 bound `window` and `polyorder`.
+
+**Segments, despike, baseline and `noise_sd`.**
+- Segments: `range ± margin_cm1` and `range` are inclusive channel ranges on the ascending dataset axis.
+- Despike (`median_mad`): a sample whose residual from the `kernel`-channel running median (`mode="nearest"`) is more than `thresh` noise sds, either sign, is replaced by the running median. The noise sd is 1.4826 × MAD(first differences) / √2 over the clipped segment. The residual's own MAD is not used: with `kernel: 3` a third of the residuals are exactly 0 and the rest are shrunk, which puts it at about 0.46 σ and changed 13 % of pure-noise channels (0.55 % with the first-difference estimate).
+- Baseline (`als`, Eilers and Boelens 2005): second-difference penalty `lam`, weight `p` above the baseline and `1 − p` below, reweighted until the weights stop changing, at most 10 passes. The baseline is subtracted.
+- `noise_sd` = 1.4826 × MAD of the residual from a 9-point running median (`mode="nearest"`), on the trimmed window. On white noise it reads about 0.864 σ: the median of 9 is one of the 9, so about one residual in 9 is exactly 0. Kept for Phase 1; revisited in Phase 3 when the real engine defines what it needs.
 
 ### 7.3 Backends
 ```python
@@ -510,6 +526,7 @@ task(run_id, task_index, spec_start, spec_stop, status, attempts, slurm_job_id, 
      PRIMARY KEY(run_id, task_index))
 ```
 `run.status` holds a `RunStatus` value and `task.status` a `TaskStatus` value (§7.4). `plan` creates the `task` rows; after that only a refresh from `poll` updates them.
+`run.config_hash` is the SHA-256 of sorted, compact JSON of `{engine, engine_version, engine_config}`. Runs with the same `dataset_id`, `priors_hash`, `config_hash` and `seed` are the same analysis and should give the same results; paths, profile, backend and workers are execution settings, kept as provenance in `resolved_config` and the `profile` and `backend` columns.
 Rollback journal (not WAL) on every machine; `PRAGMA user_version = 1`, and a catalog with another version is refused; 30 s busy timeout; every write is one `BEGIN IMMEDIATE` transaction. Reading a catalog that does not exist creates nothing; the first write creates it and its parent directories. `raman runs import DIR` registers a run folder copied from elsewhere.
 
 Constraints: every column is `NOT NULL` except `dataset.sample`, `run.git_sha`, `run.completed_at`, `run.result_uri`, and `task.slurm_job_id`, `n_ok`, `n_failed`, `error`. Foreign keys: `run.dataset_id → dataset`, `run.priors_hash → priors_spec`, `task.run_id → run`. `CHECK` constraints limit `run.status`, `task.status` and `priors_spec.status` to their enum values. Times are ISO 8601 text with a UTC offset. `completed_at` is set when a run enters `complete`.
@@ -559,10 +576,10 @@ limits: {max_core_hours_without_confirm: 2000}
 | Command | Notes |
 |---|---|
 | `raman ingest PATH [--sample S] [--dry-run] [--archive] [--allow-partial-grid] [--as-job]` | PATH = scan folder or parent of several; `--dry-run` prints parsed sections, grid, first 10 filenames, file-count check |
-| `raman datasets list/show` | |
+| `raman datasets list/show` | `show` adds the dataset's QC flag counts |
 | `raman validate-priors FILE` | exit 2 on error |
 | `raman priors import-csv / export-csv` | |
-| `raman plan --dataset D --priors P [--engine mock] [--spectra-per-task N]` | prints tasks, core-hour estimate, sbatch preview |
+| `raman plan --dataset D --priors P [--engine E] [--spectra-per-task N] [--seed N]` | prints tasks; `--engine` defaults to the profile's `engine.name`; `--seed` (0 to 2⁶³ − 1) fixes the run seed, else it is drawn at plan time; core-hour estimate and sbatch preview come with the Slurm benchmark (Phase 2) |
 | `raman submit RUN [--dry-run \| --confirm] [--resubmit-failed]` | |
 | `raman run --dataset D --priors P` | plan + submit + wait (local backend only) |
 | `raman run-task --run RUN --task N` | invoked by backends |
@@ -574,6 +591,10 @@ limits: {max_core_hours_without_confirm: 2000}
 | `raman doctor` | env, paths, `${VAR}` resolution, pixi_bin exists, quotas, live Slurm limits, scratch age |
 
 Exit codes: 0 ok · 2 validation · 3 nothing to do / already running · 4 backend or infrastructure. `--json` outputs validate against schemas in `schemas/cli/`.
+
+**Ingesting several scans.** Scans are independent and taken in name order. Each ends ingested (0), already ingested (3), previewed by `--dry-run` (0) or failed on its input (2); the command exits 2 if any scan failed, else 3 if every scan was already ingested, else 0. Exit 4 is not a per-scan outcome: an error writing a store or the catalog stops the command at that scan, so later scans are not attempted and it wins over an earlier 2. Every text-report line starts with the scan name. A dry run parses Info.txt and runs the grid check but reads no spectra.
+
+**`--json` data payloads.** `data` is a free-form object in the envelope schema, so each command's payload is its contract. Adding a key inside `data` is recorded as a clarification here; renaming, removing or retyping one is a design change and needs approval. `ingest` gives one `data.scans[]` entry per scan folder. Each ingested scan, and `datasets show`'s `data`, carries `qc: {n_spectra, n_flagged, flags}`: `flags` has every §3 flag (`nan_or_inf`, `saturated`, `axis_mismatch`, `negative`), zeros included, and `n_flagged` counts spectra with any flag (a spectrum can carry several). `qc` is null for scans already ingested, failed or previewed, and in `datasets show` when the store cannot be read from this machine (with a warning; exit 0).
 
 ## 11. Testing
 
@@ -605,7 +626,7 @@ Exit codes: 0 ok · 2 validation · 3 nothing to do / already running · 4 backe
 - `collect` on an incomplete run refuses; `--partial` succeeds and marks the manifest.
 - CLI `--json` outputs validate against schemas; exit codes per §10.
 
-**Full-data smoke (not in CI, documented in README).** Ingest **both** `NMC811-Exported-Data` and `NMC111-Exported-Data` (5 datasets, 11,250 spectra); run each with `mock`; < 3 min on a laptop. Presence-probability distributions should be comparable between NMC111 and NMC811 despite the ~3× intensity difference.
+**Full-data smoke (not in CI, documented in README).** Ingest **both** `NMC811-Exported-Data` and `NMC111-Exported-Data` (5 datasets, 11,250 spectra); run each with `mock`; < 3 min on a laptop. Presence-probability distributions should be comparable between NMC111 and NMC811 despite the ~3× intensity difference. The sample scans carry no detectable carbon, so the full-data smoke demonstrates throughput and plumbing, not carbon detection.
 
 **Wheel install in CI.** One ubuntu job builds the wheel (`python -m build`), installs it with `pip install dist/*.whl` into a plain venv (no pixi), and runs `raman --help` and `python -c "import raman_bayes"`. This catches files or dependencies missing from the wheel.
 
@@ -653,6 +674,7 @@ For each sub-step: failing tests first, then implementation; stop with a five-li
 
 ## 16. Review log
 
+- v0.7 → v0.8: Phase 1 batch B clarifications, no design change: new modules in the layout (§2); scan-folder rules, dataset axis = first spectrum in raster order, QC on finite samples, `negative` = any finite count < 0 (§3); codecs, 1-D chunking, store checks (§4); MockEngine details (§6); UUIDv7 counter, `git_sha` null at plan, missing store exits 4, `slurm_array` needs `--spectra-per-task` until the benchmark (§7.1); inclusive segments, despike's noise sd from first differences, ALS reweighting rule, `noise_sd`'s 0.864 σ on white noise (§7.2); `config_hash` (§8.5); `plan --seed` and the `--engine` default, core-hour estimate and sbatch preview deferred to Phase 2, exit codes for several scans, QC counts in `ingest` and `datasets show`, the `--json` payload rule (§10); full-data smoke scope (§11). **Deferred** to the batch C checkpoint (v0.9): §3 flat-top saturation gives false positives (NMC811_v1 spectrum 808: three equal counts of 31432 at −11 cm⁻¹, against a full scale of 327675; a constant spectrum is flagged the same way). Preferred direction: a flat top counts as saturation only when the maximum is at least a fraction (likely 0.5) of `n_accum × 65535`; QC at ingest stays recipe-free, so a window-based rule is out. Process: fix a red CI before starting the next sub-step.
 - v0.6 → v0.7: Phase 1 batch A clarifications, no design change: spectrum lines parsed per line, not with `np.loadtxt` (§3); `n_spectra ≤ nx·ny·nz` under `allow_partial` (§4); ids unique within their kind, "inside" inclusive, overlap of open intervals (§5); `lock_stale_minutes` for local runs (§7.2); in-flight task statuses for `failed` (§7.4); catalog constraints and A16 pragmas (§8.5); profile name-vs-path rule, `--profile` over `RAMAN_PROFILE` over `local`, settings defaults (§9).
 - v0.5 → v0.6: Phase 1 models finalized: ScanInfo and DatasetManifest (§3, §4), SmoothingSpec (§5, §7.2), RunConfig, RunPlan and settings details (§7.1, §9), TaskState, SubmissionRecord and the explicit transition table (§7.4, §8.5); shards are two files per sub-batch, fits before peaks (§7.2, §8.1).
 - v0.4 → v0.5: §11 asserts n_accum per file (1, 5, 5, 5, 10), confirmed against the raw Info.txt files; §3 Info.txt layout corrected from the real files; §5 rule 8 is plan-time (unchanged, clarified in Phase 1 plan).
