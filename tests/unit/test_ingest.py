@@ -190,6 +190,9 @@ def test_cli_one_failed_scan_exits_2_and_reports_every_scan(
     assert bad["errors"]
     assert "time series" in bad["errors"][0]
     assert env.errors == tuple(bad["errors"])
+    report = (env.message or "").splitlines()
+    assert report[0].startswith("NMC811_v0: ingested 25 spectra as NMC811_v0-")
+    assert report[1] == "NMC811_v9: not ingested"
     assert [row.dataset_id for row in Catalog(raman_paths.catalog).list_datasets()] == [
         good["dataset_id"]
     ]

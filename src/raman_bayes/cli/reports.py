@@ -32,7 +32,7 @@ def _outcome_lines(outcome: ScanOutcome) -> str:
         return f"{outcome.folder.name}: already ingested as {manifest.dataset_id}; nothing to do"
     if outcome.preview is not None:
         return _preview(outcome.folder.name, outcome.preview)
-    return f"{outcome.folder}: not ingested"
+    return f"{outcome.folder.name}: not ingested"
 
 
 def _preview(name: str, preview: IngestPreview) -> str:
