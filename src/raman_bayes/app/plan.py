@@ -8,8 +8,6 @@ with a warning; production runs will require approved recipes.
 """
 
 import dataclasses
-import hashlib
-import json
 import os
 import secrets
 from dataclasses import dataclass
@@ -23,7 +21,7 @@ from raman_bayes.config.settings import LoadedSettings, Settings
 from raman_bayes.domain.errors import InputError, TaskSizeRequiredError
 from raman_bayes.domain.priors import PriorsSpec
 from raman_bayes.domain.priors_rules import check_axis, priors_hash
-from raman_bayes.domain.run import SEED_BITS, RunConfig, RunPlan
+from raman_bayes.domain.run import SEED_BITS, RunConfig, RunPlan, config_hash
 from raman_bayes.domain.uuid7 import uuid7
 from raman_bayes.engine.registry import load_engine
 from raman_bayes.orchestration.chunking import Chunking, plan_tasks
@@ -150,14 +148,13 @@ def _write(plan: RunPlan, runs_root: Path) -> Path:
 
 def _register(catalog: Catalog, plan: RunPlan, yaml_text: str) -> None:
     catalog.add_priors_spec(plan.priors, plan.priors_hash, yaml_text, plan.created_at)
-    resolved = json.dumps(plan.resolved_config, sort_keys=True, separators=(",", ":"))
     record = RunRecord(
         run_id=plan.run_id,
         dataset_id=plan.dataset_id,
         priors_hash=plan.priors_hash,
         engine=plan.engine,
         engine_version=plan.engine_version,
-        config_hash=hashlib.sha256(resolved.encode("utf-8")).hexdigest(),
+        config_hash=config_hash(plan),
         git_sha=None,
         backend=plan.backend,
         profile=plan.profile,

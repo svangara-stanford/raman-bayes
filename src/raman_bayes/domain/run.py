@@ -3,10 +3,13 @@
 RunStatus lists the §7.4 states only; legal transitions are enforced by the catalog (§7.4).
 A RunPlan checks itself on construction and on load: its run id is a canonical UUIDv7, its
 ``priors_hash`` is the §5 rule 9 hash of the recipe it carries, and its tasks are exactly the
-contiguous partition of the spectra into ``spectra_per_task`` blocks. TaskStatus, TaskState and
+contiguous partition of the spectra into ``spectra_per_task`` blocks. ``config_hash`` is the
+catalog's hash of the fit configuration (§8.5). TaskStatus, TaskState and
 SubmissionRecord are provisional until sub-step 12 settles them.
 """
 
+import hashlib
+import json
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Literal, Self
@@ -30,6 +33,7 @@ __all__ = [
     "TaskSpec",
     "TaskState",
     "TaskStatus",
+    "config_hash",
     "task_ranges",
 ]
 
@@ -139,6 +143,22 @@ class RunPlan(DomainModel):
                 {"n": self.n_spectra, "s": self.spectra_per_task},
             )
         return self
+
+
+def config_hash(plan: RunPlan) -> str:
+    """Return the SHA-256 hex digest of the plan's engine, engine version and engine config.
+
+    The digest is taken over sorted, compact JSON. Runs with the same ``dataset_id``,
+    ``priors_hash``, ``config_hash`` and ``seed`` are the same analysis and should give the same
+    results, so where and how a run executes (paths, profile, backend, workers) is left out.
+    """
+    fit = {
+        "engine": plan.engine,
+        "engine_version": plan.engine_version,
+        "engine_config": plan.engine_config,
+    }
+    text = json.dumps(fit, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 class TaskStatus(StrEnum):

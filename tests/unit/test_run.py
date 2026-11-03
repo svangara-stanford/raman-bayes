@@ -1,5 +1,7 @@
 """Run models (DESIGN.md §7.1, §7.3, §7.4, §8.5): plan, task specs, statuses, submissions."""
 
+import hashlib
+import json
 import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -24,6 +26,7 @@ from raman_bayes.domain.run import (
     TaskSpec,
     TaskState,
     TaskStatus,
+    config_hash,
     task_ranges,
 )
 from raman_bayes.domain.uuid7 import uuid7
@@ -384,6 +387,47 @@ def test_run_plan_run_id_must_be_uuid7(run_id: str) -> None:
 
 def test_run_plan_created_at_must_be_aware() -> None:
     assert "timezone_aware" in _error_types(_plan(created_at=datetime(2026, 11, 2, 12, 0)))
+
+
+def test_config_hash_is_sha256_of_the_fit_configuration() -> None:
+    plan = RunPlan.model_validate(_plan())
+    fit = {"engine": "mock", "engine_version": "0.1.0", "engine_config": plan.engine_config}
+    text = json.dumps(fit, sort_keys=True, separators=(",", ":"))
+    assert config_hash(plan) == hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def test_config_hash_ignores_where_and_how_the_run_executes() -> None:
+    laptop = RunPlan.model_validate(_plan(resolved_config={"paths": {"runs_root": "/a/runs"}}))
+    cluster = RunPlan.model_validate(
+        _plan(
+            run_id=RUN_IDS[1],
+            dataset_uri="/scratch/datasets/NMC811_v0-0123456789.zarr",
+            backend="slurm_array",
+            profile="sherlock",
+            resolved_config={
+                "paths": {"runs_root": "/scratch/runs"},
+                "profile_source": "/home/u/sherlock.yaml",
+                "local": {"workers": 3},
+                "slurm": {"pixi_bin": "/home/u/.pixi/bin/pixi"},
+            },
+            seed=8,
+        )
+    )
+    assert config_hash(laptop) == config_hash(cluster)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"engine": "bayes_v1"},
+        {"engine_version": "0.2.0"},
+        {"engine_config": {"n_iter": 8000, "burn_in": 3000, "thin": 5, "options": {}}},
+    ],
+)
+def test_config_hash_tracks_engine_version_and_config(change: dict[str, Any]) -> None:
+    assert config_hash(RunPlan.model_validate(_plan(**change))) != config_hash(
+        RunPlan.model_validate(_plan())
+    )
 
 
 def test_seed_range() -> None:

@@ -18,7 +18,7 @@ from raman_bayes.cli.output import CliEnvelope, ExitCode
 from raman_bayes.config.settings import PathsSettings, load_settings
 from raman_bayes.domain.priors import Window
 from raman_bayes.domain.priors_rules import priors_hash
-from raman_bayes.domain.run import RunConfig, RunPlan, RunStatus, TaskStatus
+from raman_bayes.domain.run import RunConfig, RunPlan, RunStatus, TaskStatus, config_hash
 from raman_bayes.engine.mock import MockEngine
 from raman_bayes.ports.engine import EngineConfig
 from raman_bayes.storage.catalog import Catalog
@@ -121,10 +121,26 @@ def test_plan_writes_run_plan_and_catalog_rows(dataset_id: str, raman_paths: Pat
         "0.1.0",
     )
     assert (run.backend, run.profile, run.seed) == ("local", "local", plan.seed)
+    assert run.config_hash == config_hash(plan)
     assert run.created_at == NOW
     tasks = catalog.tasks(plan.run_id)
     assert [(t.task_index, t.spec_start, t.spec_stop) for t in tasks] == [(0, 0, 16), (1, 16, 25)]
     assert all(t.state.status is TaskStatus.PENDING and t.state.attempts == 0 for t in tasks)
+
+
+def test_config_hash_same_when_only_execution_settings_differ(
+    dataset_id: str, raman_paths: PathsSettings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = _plan(dataset_id, FIXTURE).plan
+    monkeypatch.setenv("RAMAN_PATHS__RUNS_ROOT", str(tmp_path / "elsewhere"))
+    monkeypatch.setenv("RAMAN_LOCAL__WORKERS", "3")
+    second = _plan(dataset_id, FIXTURE).plan
+    assert first is not None
+    assert second is not None
+    assert first.resolved_config != second.resolved_config
+    catalog = Catalog(raman_paths.catalog)
+    rows = [catalog.get_run(p.run_id) for p in (first, second)]
+    assert [r.config_hash for r in rows if r is not None] == [config_hash(first)] * 2
 
 
 def test_plan_freezes_absolute_resolved_config(dataset_id: str) -> None:
