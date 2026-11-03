@@ -119,6 +119,20 @@ def test_cli_datasets_list_and_show(catalog_path: Path) -> None:
     assert DATASET_ID in human.stdout
 
 
+def test_cli_datasets_show_without_a_readable_store_warns(catalog_path: Path) -> None:
+    _populate(catalog_path)  # registers a store path that does not exist
+    code, env = _json(["datasets", "show", DATASET_ID])
+    assert code == ExitCode.OK
+    assert env.data is not None
+    assert env.data["qc"] is None
+    (warning,) = env.warnings
+    assert "QC flags not available" in warning
+    assert f"{DATASET_ID}.zarr" in warning
+    human = runner.invoke(app, ["datasets", "show", DATASET_ID])
+    assert human.exit_code == ExitCode.OK
+    assert "QC flags not available" in human.stderr
+
+
 def test_cli_datasets_show_unknown_exits_2(catalog_path: Path) -> None:
     _populate(catalog_path)
     code, env = _json(["datasets", "show", "nope-0000000000"])

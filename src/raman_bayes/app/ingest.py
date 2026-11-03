@@ -22,7 +22,7 @@ from pydantic import JsonValue
 from raman_bayes.config.settings import PathsSettings
 from raman_bayes.domain.dataset import DatasetManifest, ScanInfo
 from raman_bayes.domain.errors import AxisMismatchError, InputError, ScanFolderError
-from raman_bayes.domain.qc import qc_flags
+from raman_bayes.domain.qc import QCCounts, qc_counts, qc_flags
 from raman_bayes.io.nanofinder import AXIS_TOLERANCE_CM1, axis_matches, parse_info, read_spectrum
 from raman_bayes.io.scan_folder import (
     GridLayout,
@@ -82,7 +82,8 @@ class ScanOutcome:
     """The result for one scan folder.
 
     ``manifest`` and ``store_uri`` are set when ingested or already there, ``preview`` on a dry
-    run, and ``errors`` exactly when the status is failed.
+    run, and ``errors`` exactly when the status is failed. ``qc`` is set only when ingested,
+    from the arrays just read; ``datasets show`` gives it for a dataset already there.
     """
 
     folder: Path
@@ -90,6 +91,7 @@ class ScanOutcome:
     manifest: DatasetManifest | None = None
     store_uri: Path | None = None
     preview: IngestPreview | None = None
+    qc: QCCounts | None = None
     errors: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
 
@@ -112,6 +114,7 @@ class ScanOutcome:
                 "n_positions": preview.n_positions,
                 "first_files": list(preview.first_files),
             },
+            "qc": self.qc.model_dump(mode="json") if self.qc else None,
             "errors": list(self.errors),
             "warnings": list(self.warnings),
         }
@@ -242,7 +245,12 @@ def _store(
     catalog.add_dataset(manifest, store)
     _log.info("%s: ingested as %s", folder, dataset_id)
     return ScanOutcome(
-        folder, ScanStatus.INGESTED, manifest=manifest, store_uri=store, warnings=scan.warnings
+        folder,
+        ScanStatus.INGESTED,
+        manifest=manifest,
+        store_uri=store,
+        qc=qc_counts(arrays.qc_flags),
+        warnings=scan.warnings,
     )
 
 

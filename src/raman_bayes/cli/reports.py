@@ -9,9 +9,10 @@ from pathlib import Path
 
 from raman_bayes.app.ingest import IngestPreview, ScanOutcome, ScanStatus
 from raman_bayes.domain.dataset import AxisSpec
+from raman_bayes.domain.qc import QCCounts
 from raman_bayes.domain.run import RunPlan
 
-__all__ = ["ingest_report", "plan_report"]
+__all__ = ["ingest_report", "plan_report", "qc_summary"]
 
 _TASKS_SHOWN = 20  # a Slurm plan may have hundreds; the JSON envelope lists them all
 
@@ -24,15 +25,24 @@ def ingest_report(outcomes: Sequence[ScanOutcome]) -> str:
 def _outcome_lines(outcome: ScanOutcome) -> str:
     manifest = outcome.manifest
     if outcome.status is ScanStatus.INGESTED and manifest is not None:
+        qc = f"; {qc_summary(outcome.qc)}" if outcome.qc is not None else ""
         return (
             f"{outcome.folder.name}: ingested {manifest.n_spectra} spectra as "
-            f"{manifest.dataset_id} into {outcome.store_uri}"
+            f"{manifest.dataset_id} into {outcome.store_uri}{qc}"
         )
     if outcome.status is ScanStatus.EXISTS and manifest is not None:
         return f"{outcome.folder.name}: already ingested as {manifest.dataset_id}; nothing to do"
     if outcome.preview is not None:
         return _preview(outcome.folder.name, outcome.preview)
     return f"{outcome.folder.name}: not ingested"
+
+
+def qc_summary(counts: QCCounts) -> str:
+    """Describe the QC counts in one line, naming only the flags that occur."""
+    if counts.n_flagged == 0:
+        return "no QC flags"
+    present = ", ".join(f"{name} {n}" for name, n in counts.flags.items() if n)
+    return f"QC flags on {counts.n_flagged} of {counts.n_spectra} spectra: {present}"
 
 
 def _preview(name: str, preview: IngestPreview) -> str:

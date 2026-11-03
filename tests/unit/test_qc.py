@@ -5,7 +5,7 @@ import numpy.typing as npt
 import pytest
 
 from raman_bayes.domain.dataset import QCFlag
-from raman_bayes.domain.qc import qc_flags
+from raman_bayes.domain.qc import QCCounts, qc_counts, qc_flags
 
 N_WN = 64
 
@@ -99,3 +99,26 @@ def test_rows_are_flagged_independently() -> None:
         QCFlag.SATURATED,
         QCFlag(0),
     ]
+
+
+def test_qc_counts_per_flag_and_flagged_spectra() -> None:
+    flags = np.array(
+        [0, QCFlag.SATURATED, QCFlag.SATURATED | QCFlag.NEGATIVE, QCFlag.NAN_OR_INF, 0],
+        dtype=np.uint16,
+    )
+    counts = qc_counts(flags)
+    assert counts == QCCounts(
+        n_spectra=5,
+        n_flagged=3,  # the per-flag counts sum to 4: one spectrum carries two flags
+        flags={"nan_or_inf": 1, "saturated": 2, "axis_mismatch": 0, "negative": 1},
+    )
+    assert list(counts.flags) == ["nan_or_inf", "saturated", "axis_mismatch", "negative"]
+
+
+def test_qc_counts_of_a_clean_dataset_lists_every_flag() -> None:
+    counts = qc_counts(np.zeros(25, dtype=np.uint16))
+    assert counts.model_dump(mode="json") == {
+        "n_spectra": 25,
+        "n_flagged": 0,
+        "flags": {"nan_or_inf": 0, "saturated": 0, "axis_mismatch": 0, "negative": 0},
+    }

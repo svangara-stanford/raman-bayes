@@ -112,6 +112,7 @@ def test_second_ingest_is_noop_exit_3(mini_scan: Path, raman_paths: PathsSetting
     assert second.data is not None
     assert second.data["scans"][0]["status"] == "exists"
     assert second.data["scans"][0]["dataset_id"] == scan["dataset_id"]
+    assert second.data["scans"][0]["qc"] is None  # datasets show reads it from the store
     assert (store / "zarr.json").stat().st_mtime_ns == stamp
     assert len(Catalog(raman_paths.catalog).list_datasets()) == 1
 
@@ -186,7 +187,8 @@ def test_cli_one_failed_scan_exits_2_and_reports_every_scan(
     assert (good["status"], bad["status"]) == ("ingested", "failed")
     assert good["dataset_id"].startswith("NMC811_v0-")
     assert Path(good["store_uri"]).is_dir()
-    assert (bad["dataset_id"], bad["store_uri"], bad["manifest"]) == (None, None, None)
+    assert (bad["dataset_id"], bad["store_uri"], bad["manifest"], bad["qc"]) == (None,) * 4
+    assert good["qc"]["n_flagged"] == 0
     assert bad["errors"]
     assert "time series" in bad["errors"][0]
     assert env.errors == tuple(bad["errors"])
@@ -196,6 +198,53 @@ def test_cli_one_failed_scan_exits_2_and_reports_every_scan(
     assert [row.dataset_id for row in Catalog(raman_paths.catalog).list_datasets()] == [
         good["dataset_id"]
     ]
+
+
+def _flag_two_spectra(scan: Path, replace_once: ReplaceOnce) -> None:
+    # One count made negative in one spectrum and NaN in another; first lines are unique.
+    for name, value in (("z0y0x0", b"-5.00"), ("z0y0x1", b"nan")):
+        path = scan / f"{scan.name}-{name}.txt"
+        first = path.read_bytes().splitlines()[0]
+        replace_once(path, first, first.split(b"\t")[0] + b"\t" + value)
+
+
+QC_TWO = {
+    "n_spectra": 25,
+    "n_flagged": 2,
+    "flags": {"nan_or_inf": 1, "saturated": 0, "axis_mismatch": 0, "negative": 1},
+}
+
+
+@pytest.mark.usefixtures("raman_paths")
+def test_ingest_reports_qc_counts(mini_scan: Path, replace_once: ReplaceOnce) -> None:
+    clean = _copy_as(mini_scan, "NMC811_v9")
+    _flag_two_spectra(mini_scan, replace_once)
+    code, env = _cli(str(mini_scan), "--allow-partial-grid")
+    assert code == ExitCode.OK, env
+    assert env.data is not None
+    (scan,) = env.data["scans"]
+    assert scan["qc"] == QC_TWO
+    assert env.message is not None
+    assert env.message.endswith("; QC flags on 2 of 25 spectra: nan_or_inf 1, negative 1")
+    result = runner.invoke(app, ["ingest", str(clean), "--allow-partial-grid"])
+    assert result.stdout.rstrip().endswith("; no QC flags")
+
+
+def test_datasets_show_reports_qc_counts(
+    mini_scan: Path, raman_paths: PathsSettings, replace_once: ReplaceOnce
+) -> None:
+    _flag_two_spectra(mini_scan, replace_once)
+    outcome = _one(_partial(mini_scan), raman_paths)
+    assert outcome.manifest is not None
+    dataset_id = outcome.manifest.dataset_id
+    result = runner.invoke(app, ["datasets", "show", dataset_id, "--json"])
+    assert result.exit_code == ExitCode.OK
+    env = CliEnvelope.model_validate_json(result.stdout)
+    assert env.data is not None
+    assert env.data["qc"] == QC_TWO
+    assert env.warnings == ()
+    human = runner.invoke(app, ["datasets", "show", dataset_id])
+    assert human.stdout.rstrip().endswith("QC flags on 2 of 25 spectra: nan_or_inf 1, negative 1")
 
 
 def test_dry_run_reports_and_writes_nothing(mini_scan: Path, raman_paths: PathsSettings) -> None:
@@ -208,6 +257,7 @@ def test_dry_run_reports_and_writes_nothing(mini_scan: Path, raman_paths: PathsS
     assert (preview.n_files, preview.n_positions) == (25, 1250)
     assert preview.first_files == tuple(f"NMC811_v0-z0y{i // 5}x{i % 5}.txt" for i in range(10))
     assert outcome.manifest is None
+    assert outcome.qc is None  # a dry run reads no spectra
     assert not raman_paths.data_root.exists()
     assert not raman_paths.catalog.exists()
 

@@ -150,6 +150,11 @@ class StoredDataset:
         axis: npt.NDArray[np.float64] = self._array("wavenumber")[:]
         return axis
 
+    def qc_flags(self) -> npt.NDArray[np.uint16]:
+        """Return every spectrum's QC flags alone, without reading any spectra."""
+        flags: npt.NDArray[np.uint16] = self._array("qc_flags")[:]
+        return flags
+
     def read(self, start: int = 0, stop: int | None = None) -> DatasetArrays:
         """Return spectra ``start`` to ``stop`` (exclusive; default all) and the shared arrays."""
         rows = slice(start, stop)

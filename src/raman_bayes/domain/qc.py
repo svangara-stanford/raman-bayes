@@ -2,16 +2,18 @@
 
 Saturation has two signatures: a count at the detector's full scale times the number of
 accumulations (the Andor DU920P is 16-bit and counts are summed), or a flat top, where clipping
-leaves at least three consecutive samples equal to the spectrum maximum.
+leaves at least three consecutive samples equal to the spectrum maximum. ``qc_counts``
+summarises a dataset's flags for ``ingest`` and ``datasets show``.
 """
 
 import numpy as np
 import numpy.typing as npt
 from scipy.ndimage import minimum_filter1d
 
+from raman_bayes.domain._base import DomainModel
 from raman_bayes.domain.dataset import QCFlag
 
-__all__ = ["FLAT_TOP_SAMPLES", "FULL_SCALE_COUNTS", "qc_flags"]
+__all__ = ["FLAT_TOP_SAMPLES", "FULL_SCALE_COUNTS", "QCCounts", "qc_counts", "qc_flags"]
 
 FULL_SCALE_COUNTS = 65535
 FLAT_TOP_SAMPLES = 3
@@ -41,3 +43,26 @@ def qc_flags(
         | np.where(negative, QCFlag.NEGATIVE, 0)
     )
     return bits.astype(np.uint16)
+
+
+class QCCounts(DomainModel):
+    """How many spectra carry each QC flag.
+
+    ``flags`` has every QCFlag, lower-case, in bit order, zeros included. ``n_flagged`` counts
+    spectra with any flag; a spectrum can carry several, so ``flags`` may sum to more.
+    """
+
+    n_spectra: int
+    n_flagged: int
+    flags: dict[str, int]
+
+
+def qc_counts(flags: npt.NDArray[np.unsignedinteger]) -> QCCounts:
+    """Count the spectra carrying each flag in ``flags``, the per-spectrum QCFlag bits."""
+    return QCCounts(
+        n_spectra=int(flags.size),
+        n_flagged=int(np.count_nonzero(flags)),
+        flags={
+            str(flag.name).lower(): int(np.count_nonzero(flags & flag.value)) for flag in QCFlag
+        },
+    )

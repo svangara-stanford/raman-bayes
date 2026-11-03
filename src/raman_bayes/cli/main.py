@@ -16,7 +16,7 @@ from raman_bayes.app.ingest import IngestRequest, ScanOutcome, ScanStatus
 from raman_bayes.app.ingest import ingest as ingest_scans
 from raman_bayes.app.plan import RUN_PLAN_FILE, plan_run
 from raman_bayes.cli.output import CliEnvelope, ExitCode, emit
-from raman_bayes.cli.reports import ingest_report, plan_report
+from raman_bayes.cli.reports import ingest_report, plan_report, qc_summary
 from raman_bayes.config.settings import LoadedSettings, load_settings, requested_profile
 from raman_bayes.domain.errors import ConfigError, DatasetStoreError
 from raman_bayes.domain.run import SEED_LIMIT, RunConfig
@@ -79,9 +79,20 @@ def _finish(envelope: CliEnvelope, as_json: bool) -> NoReturn:
     raise typer.Exit(code=envelope.exit_code)
 
 
-def _succeed(command: str, message: str, data: dict[str, Any], as_json: bool) -> NoReturn:
+def _succeed(
+    command: str,
+    message: str,
+    data: dict[str, Any],
+    as_json: bool,
+    warnings: tuple[str, ...] = (),
+) -> NoReturn:
     envelope = CliEnvelope(
-        command=command, exit_code=ExitCode.OK, ok=True, message=message, data=data
+        command=command,
+        exit_code=ExitCode.OK,
+        ok=True,
+        message=message,
+        data=data,
+        warnings=warnings,
     )
     _finish(envelope, as_json)
 
@@ -213,14 +224,17 @@ def datasets_show(
     profile: ProfileOpt = None,
     as_json: JsonOpt = False,
 ) -> None:
-    """Show one dataset's manifest."""
+    """Show one dataset's manifest and QC flag counts."""
     catalog = _settings("datasets show", profile, as_json).settings.paths.catalog
-    row = catalog_views.find_dataset(catalog, dataset)
-    if row is None:
+    view = catalog_views.show_dataset(catalog, dataset)
+    if view is None:
         error = f"no dataset {dataset!r} in {catalog}"
         _finish(_invalid("datasets show", "unknown dataset", (error,), ()), as_json)
-    message = row.manifest.model_dump_json(indent=2)
-    _succeed("datasets show", message, row.as_json(), as_json)
+    message = view.row.manifest.model_dump_json(indent=2)
+    if view.qc is not None:
+        message = f"{message}\n{qc_summary(view.qc)}"
+    data = view.row.as_json() | {"qc": view.qc.model_dump(mode="json") if view.qc else None}
+    _succeed("datasets show", message, data, as_json, view.warnings)
 
 
 # ---------------------------------------------------------------- priors
