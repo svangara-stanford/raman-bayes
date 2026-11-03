@@ -1,1 +1,1 @@
-"""Peak engines and entry-point registry; MockEngine lands in Phase 1."""
+"""Peak engines: the entry-point registry, MockEngine and per-fit seed derivation."""

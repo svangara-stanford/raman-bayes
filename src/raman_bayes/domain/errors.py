@@ -11,16 +11,24 @@ from pathlib import Path
 from pydantic import ValidationError
 
 __all__ = [
+    "AxisMismatchError",
     "CatalogError",
     "ConfigError",
+    "CountTooLargeError",
+    "DatasetStoreError",
+    "DuplicateSpectrumError",
     "FilenamePatternError",
     "FilenamePatternGroupsError",
     "FilenamePatternSyntaxError",
+    "FolderScanMismatchError",
+    "GridError",
     "IllegalTransitionError",
+    "InfoFileCountError",
     "InfoFileError",
     "InfoFilenameError",
     "InfoValueError",
     "InputError",
+    "InvalidEngineError",
     "InvalidProfileError",
     "InvalidScanInfoError",
     "LegacyCsvError",
@@ -29,19 +37,36 @@ __all__ = [
     "MalformedVariableError",
     "MissingInfoKeyError",
     "MissingInfoSectionError",
+    "MissingSpectraError",
     "NegativeDurationError",
+    "NoScanFolderError",
+    "OutOfGridSpectrumError",
     "RamanBayesError",
+    "ScanFolderError",
     "SpectrumFileError",
     "SpectrumLineError",
     "SpectrumRowCountError",
+    "SpectrumScanMismatchError",
     "StaleStatusError",
+    "TaskSizeRequiredError",
     "TimeSeriesNotSupportedError",
+    "TooManyTasksError",
+    "UnknownEngineError",
     "UnknownProfileError",
     "UnknownRunError",
     "UnknownTaskError",
     "UnsetVariableError",
     "UnsupportedCatalogError",
 ]
+
+
+_SHOWN = 5  # names listed in a message before "and N more"
+
+
+def _some(names: Sequence[str], total: int | None = None) -> str:
+    total = len(names) if total is None else total
+    shown = ", ".join(names[:_SHOWN])
+    return f"{shown} and {total - _SHOWN} more" if total > _SHOWN else shown
 
 
 class RamanBayesError(Exception):
@@ -163,6 +188,154 @@ class SpectrumLineError(SpectrumFileError):
     def __init__(self, path: Path, line_number: int, line: str) -> None:
         self.line_number = line_number
         super().__init__(f"{path}, line {line_number}: expected two numbers, got {line!r}")
+
+
+class AxisMismatchError(SpectrumFileError):
+    """Spectrum files whose wavenumber axis differs from the dataset axis beyond tolerance."""
+
+    def __init__(self, folder: Path, files: Sequence[str], tolerance_cm1: float) -> None:
+        super().__init__(
+            f"{folder}: {len(files)} spectrum file(s) have a wavenumber axis more than "
+            f"{tolerance_cm1} cm^-1 from the first file's: {_some(files)}; "
+            "use --allow-axis-mismatch to ingest them with the axis_mismatch flag"
+        )
+
+
+class CountTooLargeError(SpectrumFileError):
+    """A count that float32 cannot store exactly."""
+
+    def __init__(self, file: str, value: float, limit: int) -> None:
+        super().__init__(
+            f"{file}: count {value:g} has magnitude {limit} or more, "
+            "so the dataset's float32 intensities could not store every count exactly"
+        )
+
+
+# ---------------------------------------------------------------- scan folders and grids
+
+
+class ScanFolderError(InputError):
+    """A path is not a scan folder, or a scan folder is not laid out as ingest expects."""
+
+
+class NoScanFolderError(ScanFolderError):
+    """The path neither is a scan folder nor holds any."""
+
+    def __init__(self, path: Path) -> None:
+        super().__init__(
+            f"{path}: no scan folder found; expected a folder holding <scan>-Info.txt, "
+            "or a folder of such folders"
+        )
+
+
+class InfoFileCountError(ScanFolderError):
+    """A scan folder holds more than one Info.txt."""
+
+    def __init__(self, folder: Path, names: Sequence[str]) -> None:
+        super().__init__(f"{folder}: expected one <scan>-Info.txt, found {', '.join(names)}")
+
+
+class FolderScanMismatchError(ScanFolderError):
+    """The folder name is not the scan named by its Info.txt."""
+
+    def __init__(self, folder: Path, info_name: str, scan: str) -> None:
+        super().__init__(
+            f"{folder / info_name}: names scan {scan!r}, but its folder is {folder.name!r}; "
+            "the folder must be named after the scan"
+        )
+
+
+class GridError(InputError):
+    """A scan's spectrum files do not fit its Frame Dimentions grid."""
+
+
+class SpectrumScanMismatchError(GridError):
+    """A spectrum filename names another scan."""
+
+    def __init__(self, scan: str, file: str, file_scan: str) -> None:
+        super().__init__(f"scan {scan!r}: spectrum file {file} belongs to scan {file_scan!r}")
+
+
+class OutOfGridSpectrumError(GridError):
+    """Spectrum files whose indices lie outside the grid."""
+
+    def __init__(self, scan: str, files: Sequence[str], shape: tuple[int, int, int]) -> None:
+        nx, ny, nz = shape
+        super().__init__(
+            f"scan {scan!r}: {len(files)} spectrum file(s) lie outside the "
+            f"{nx} x {ny} x {nz} grid: {_some(files)}"
+        )
+
+
+class DuplicateSpectrumError(GridError):
+    """Two or more spectrum files claim one grid position."""
+
+    def __init__(self, scan: str, position: str, files: Sequence[str]) -> None:
+        super().__init__(
+            f"scan {scan!r}: grid position {position} has {len(files)} files: {', '.join(files)}"
+        )
+
+
+class MissingSpectraError(GridError):
+    """Grid positions without a spectrum file, when the grid must be complete."""
+
+    def __init__(self, scan: str, found: int, size: int, missing: Sequence[str]) -> None:
+        hint = "; use --allow-partial-grid to ingest a partial grid" if found else ""
+        super().__init__(
+            f"scan {scan!r}: found {found} of {size} spectrum files; "
+            f"no file for {_some(missing, total=size - found)}{hint}"
+        )
+
+
+# ---------------------------------------------------------------- dataset store
+
+
+class DatasetStoreError(RamanBayesError):
+    """A dataset.zarr store is missing or inconsistent."""
+
+    def __init__(self, path: Path, problem: str) -> None:
+        super().__init__(f"{path}: {problem}")
+
+
+# ---------------------------------------------------------------- engines
+
+
+class UnknownEngineError(InputError):
+    """No installed engine has this name."""
+
+    def __init__(self, name: str, available: Sequence[str]) -> None:
+        installed = ", ".join(available) or "none"
+        super().__init__(f"no engine named {name!r}; installed engines: {installed}")
+
+
+class InvalidEngineError(InputError):
+    """An engine entry point does not provide a PeakEngine."""
+
+    def __init__(self, name: str, target: str) -> None:
+        super().__init__(f"engine {name!r} ({target}) does not provide a peak engine")
+
+
+# ---------------------------------------------------------------- plans
+
+
+class TooManyTasksError(InputError):
+    """An explicit task size gives more tasks than the backend allows."""
+
+    def __init__(self, n_tasks: int, spectra_per_task: int, max_tasks: int) -> None:
+        super().__init__(
+            f"{spectra_per_task} spectra per task gives {n_tasks} tasks, more than the backend's "
+            f"limit of {max_tasks}; use a larger --spectra-per-task"
+        )
+
+
+class TaskSizeRequiredError(InputError):
+    """The backend cannot choose a task size by itself."""
+
+    def __init__(self, backend: str) -> None:
+        super().__init__(
+            f"the {backend} backend needs --spectra-per-task; "
+            "choosing a task size from a benchmark is not supported yet"
+        )
 
 
 # ---------------------------------------------------------------- legacy priors CSV

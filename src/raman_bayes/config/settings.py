@@ -39,6 +39,7 @@ __all__ = [
     "Settings",
     "SlurmSettings",
     "load_settings",
+    "requested_profile",
 ]
 
 DEFAULT_PROFILE = "local"
@@ -152,6 +153,11 @@ class LoadedSettings:
         return resolved
 
 
+def requested_profile(profile: str | None = None) -> str:
+    """Return the profile to load: ``profile`` if given, else ``RAMAN_PROFILE``, else ``local``."""
+    return profile or os.environ.get(_PROFILE_VAR, DEFAULT_PROFILE)
+
+
 def load_settings(
     profile: str | None = None,
     *,
@@ -166,7 +172,7 @@ def load_settings(
     UnsetVariableError, MalformedVariableError or InvalidProfileError.
     """
     cwd = cwd or Path.cwd()
-    found = resolve_profile(profile or os.environ.get(_PROFILE_VAR, DEFAULT_PROFILE), cwd)
+    found = resolve_profile(requested_profile(profile), cwd)
     try:
         data = yaml.safe_load(found.text)
     except yaml.YAMLError as exc:

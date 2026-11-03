@@ -12,9 +12,14 @@ from typing import Annotated, Any, NoReturn
 import typer
 
 from raman_bayes.app import catalog_views, priors_csv, validate
+from raman_bayes.app.ingest import IngestRequest, ScanOutcome, ScanStatus
+from raman_bayes.app.ingest import ingest as ingest_scans
+from raman_bayes.app.plan import RUN_PLAN_FILE, plan_run
 from raman_bayes.cli.output import CliEnvelope, ExitCode, emit
-from raman_bayes.config.settings import LoadedSettings, load_settings
-from raman_bayes.domain.errors import ConfigError
+from raman_bayes.cli.reports import ingest_report, plan_report, qc_summary
+from raman_bayes.config.settings import LoadedSettings, load_settings, requested_profile
+from raman_bayes.domain.errors import ConfigError, DatasetStoreError
+from raman_bayes.domain.run import SEED_LIMIT, RunConfig
 
 JsonOpt = Annotated[
     bool,
@@ -74,9 +79,31 @@ def _finish(envelope: CliEnvelope, as_json: bool) -> NoReturn:
     raise typer.Exit(code=envelope.exit_code)
 
 
-def _succeed(command: str, message: str, data: dict[str, Any], as_json: bool) -> NoReturn:
+def _succeed(
+    command: str,
+    message: str,
+    data: dict[str, Any],
+    as_json: bool,
+    warnings: tuple[str, ...] = (),
+) -> NoReturn:
     envelope = CliEnvelope(
-        command=command, exit_code=ExitCode.OK, ok=True, message=message, data=data
+        command=command,
+        exit_code=ExitCode.OK,
+        ok=True,
+        message=message,
+        data=data,
+        warnings=warnings,
+    )
+    _finish(envelope, as_json)
+
+
+def _infrastructure(command: str, error: Exception, as_json: bool) -> NoReturn:
+    envelope = CliEnvelope(
+        command=command,
+        exit_code=ExitCode.BACKEND,
+        ok=False,
+        message=f"raman {command}: storage problem",
+        errors=(str(error),),
     )
     _finish(envelope, as_json)
 
@@ -133,7 +160,49 @@ def ingest(
     as_json: JsonOpt = False,
 ) -> None:
     """Pack a Nanofinder export into dataset.zarr."""
-    _stub("ingest", as_json)
+    loaded = _settings("ingest", profile, as_json)
+    refused = _slurm_only({"--archive": archive, "--as-job": as_job}, loaded)
+    if refused:
+        _finish(_invalid("ingest", "cannot ingest with these options", refused, ()), as_json)
+    request = IngestRequest(
+        path=path,
+        sample=sample,
+        allow_partial_grid=allow_partial_grid,
+        allow_axis_mismatch=allow_axis_mismatch,
+        dry_run=dry_run,
+    )
+    outcomes = ingest_scans(request, loaded.settings.paths)
+    _finish(_ingest_envelope(outcomes), as_json)
+
+
+def _slurm_only(flags: dict[str, bool], loaded: LoadedSettings) -> tuple[str, ...]:
+    # Archiving and running as a job need the Slurm backend, which is not available yet.
+    backend = loaded.settings.backend
+    reason = (
+        f"needs the slurm_array backend; profile {loaded.settings.profile!r} uses {backend}"
+        if backend == "local"
+        else "is not supported yet"
+    )
+    return tuple(f"{flag} {reason}" for flag, given in flags.items() if given)
+
+
+def _ingest_envelope(outcomes: tuple[ScanOutcome, ...]) -> CliEnvelope:
+    statuses = {o.status for o in outcomes}
+    if ScanStatus.FAILED in statuses:
+        code = ExitCode.VALIDATION
+    elif statuses & {ScanStatus.INGESTED, ScanStatus.DRY_RUN}:
+        code = ExitCode.OK
+    else:
+        code = ExitCode.NOTHING_TO_DO
+    return CliEnvelope(
+        command="ingest",
+        exit_code=code,
+        ok=code is ExitCode.OK,
+        message=ingest_report(outcomes),
+        data={"scans": [o.as_json() for o in outcomes]},
+        warnings=tuple(w for o in outcomes for w in o.warnings),
+        errors=tuple(e for o in outcomes for e in o.errors),
+    )
 
 
 @datasets_app.command("list")
@@ -155,14 +224,17 @@ def datasets_show(
     profile: ProfileOpt = None,
     as_json: JsonOpt = False,
 ) -> None:
-    """Show one dataset's manifest."""
+    """Show one dataset's manifest and QC flag counts."""
     catalog = _settings("datasets show", profile, as_json).settings.paths.catalog
-    row = catalog_views.find_dataset(catalog, dataset)
-    if row is None:
+    view = catalog_views.show_dataset(catalog, dataset)
+    if view is None:
         error = f"no dataset {dataset!r} in {catalog}"
         _finish(_invalid("datasets show", "unknown dataset", (error,), ()), as_json)
-    message = row.manifest.model_dump_json(indent=2)
-    _succeed("datasets show", message, row.as_json(), as_json)
+    message = view.row.manifest.model_dump_json(indent=2)
+    if view.qc is not None:
+        message = f"{message}\n{qc_summary(view.qc)}"
+    data = view.row.as_json() | {"qc": view.qc.model_dump(mode="json") if view.qc else None}
+    _succeed("datasets show", message, data, as_json, view.warnings)
 
 
 # ---------------------------------------------------------------- priors
@@ -254,16 +326,60 @@ def priors_export_csv(
 def plan(
     dataset: Annotated[str, typer.Option("--dataset", help="Dataset id.")],
     priors: Annotated[Path, typer.Option("--priors", help="priors.yaml.")],
-    engine: Annotated[str, typer.Option("--engine", help="Engine name.")] = "mock",
+    engine: Annotated[
+        str | None, typer.Option("--engine", help="Engine name (default: the profile's).")
+    ] = None,
     spectra_per_task: Annotated[
         int | None,
-        typer.Option("--spectra-per-task", min=1, help="Override the benchmarked task size."),
+        typer.Option("--spectra-per-task", min=1, help="Spectra per task, used as given."),
+    ] = None,
+    seed: Annotated[
+        int | None,
+        typer.Option("--seed", min=0, max=SEED_LIMIT - 1, help="Run seed (default: random)."),
     ] = None,
     profile: ProfileOpt = None,
     as_json: JsonOpt = False,
 ) -> None:
-    """Write run_plan.json; print tasks, core-hour estimate and sbatch preview."""
-    _stub("plan", as_json)
+    """Write run_plan.json and record the run; print its tasks."""
+    loaded = _settings("plan", profile, as_json)
+    config = RunConfig(
+        dataset_id=dataset,
+        priors_path=priors,
+        engine=engine or loaded.settings.engine.name,
+        spectra_per_task=spectra_per_task,
+        seed=seed,
+        profile=requested_profile(profile),
+    )
+    try:
+        result = plan_run(config, loaded)
+    except DatasetStoreError as exc:
+        _infrastructure("plan", exc, as_json)
+    if result.plan is None or result.run_dir is None:
+        _finish(_invalid("plan", "cannot plan this run", result.errors, result.warnings), as_json)
+    planned = result.plan
+    data = {
+        "run_id": planned.run_id,
+        "run_dir": str(result.run_dir),
+        "run_plan": str(result.run_dir / RUN_PLAN_FILE),
+        "dataset_id": planned.dataset_id,
+        "priors_hash": planned.priors_hash,
+        "engine": planned.engine,
+        "engine_version": planned.engine_version,
+        "backend": planned.backend,
+        "seed": planned.seed,
+        "spectra_per_task": planned.spectra_per_task,
+        "n_tasks": len(planned.tasks),
+        "tasks": [t.model_dump() for t in planned.tasks],
+    }
+    envelope = CliEnvelope(
+        command="plan",
+        exit_code=ExitCode.OK,
+        ok=True,
+        message=plan_report(planned, result.run_dir / RUN_PLAN_FILE),
+        data=data,
+        warnings=result.warnings,
+    )
+    _finish(envelope, as_json)
 
 
 @app.command()

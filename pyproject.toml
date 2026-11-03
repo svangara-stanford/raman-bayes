@@ -25,6 +25,7 @@ dependencies = [
     "zarr>=3.0,<4",
     "pydantic>=2.6,<3",
     "pydantic-settings>=2.16.2,<3",
+    "blake3>=1.0.11,<2",
     "typer>=0.12",
     "rich>=13",
     "pyyaml>=6",
@@ -33,6 +34,10 @@ dependencies = [
 
 [project.scripts]
 raman = "raman_bayes.cli.main:app"
+
+# Peak engines (DESIGN.md §6). A real engine is a separate package registering itself here.
+[project.entry-points."raman_bayes.engines"]
+mock = "raman_bayes.engine.mock:MockEngine"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/raman_bayes"]
@@ -86,6 +91,9 @@ convention = "numpy"
 # parameters are unused by design.
 "tests/unit/test_ports.py" = ["ARG002"]
 "tests/unit/typing_checks_ports.py" = ["ARG002"]
+# MockEngine implements PeakEngine, whose signatures fix these parameters; the mock needs no
+# sampler settings and can fit any window.
+"src/raman_bayes/engine/mock.py" = ["ARG002"]
 "scripts/**" = ["T20"]
 # pydantic-settings calls Settings.settings_customise_sources with these keyword arguments, so
 # the hook must accept them even though it uses only init_settings.
@@ -107,9 +115,10 @@ plugins = ["pydantic.mypy"]
 files = ["src", "tests", "scripts"]
 mypy_path = "src"
 
-# pyarrow ships no type hints (no py.typed); scope the ignore to pyarrow only.
+# pyarrow and scipy ship no type hints (no py.typed); scope the ignore to those two only.
+# scipy-stubs exists but would be another dependency.
 [[tool.mypy.overrides]]
-module = ["pyarrow", "pyarrow.*"]
+module = ["pyarrow", "pyarrow.*", "scipy", "scipy.*"]
 ignore_missing_imports = true
 
 [tool.pydantic-mypy]
