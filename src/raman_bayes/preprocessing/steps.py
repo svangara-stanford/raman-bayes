@@ -33,14 +33,17 @@ Signal = npt.NDArray[np.float64]
 def despike(y: Signal, spec: DespikeSpec) -> Signal:
     """Replace spikes by the running median.
 
-    A spike is a sample further than ``spec.thresh`` scaled MADs of the residual from the
-    ``spec.kernel``-channel running median. A one-channel cosmic ray leaves a large residual;
-    a peak several channels wide follows the median and is kept.
+    A spike is a sample whose residual from the ``spec.kernel``-channel running median is more
+    than ``spec.thresh`` noise sds, either sign. The noise sd is 1.4826 x MAD of the first
+    differences over sqrt 2: unbiased for white noise, barely moved by a spike (which touches
+    two differences) or a slow baseline. The residual's own MAD is not used: with a short
+    kernel many residuals are exactly 0 (a third for kernel 3), which would put the threshold
+    far below the noise. A one-channel cosmic ray leaves a large residual; a peak several
+    channels wide follows the median and is kept.
     """
-    baseline = median_filter(y, size=spec.kernel, mode="nearest")
-    residual = y - baseline
-    spread = median_abs_deviation(residual, scale="normal")
-    return np.where(np.abs(residual) > spec.thresh * spread, baseline, y)
+    running = median_filter(y, size=spec.kernel, mode="nearest")
+    sigma = median_abs_deviation(np.diff(y), scale="normal") / np.sqrt(2.0)
+    return np.where(np.abs(y - running) > spec.thresh * sigma, running, y)
 
 
 def als_baseline(y: Signal, spec: BaselineSpec) -> Signal:

@@ -139,10 +139,10 @@ def test_adjacent_real_peak_preserved() -> None:
     despiked = prepare(_raw(y), AXIS, WINDOW, _pre(despike=DESPIKE))
     spike = int(np.flatnonzero(despiked.wavenumber == AXIS[k])[0])
     assert abs(despiked.intensity[spike] - clean.intensity[spike]) < 0.05 * 800.0
-    # A 3-channel median can shave the top of a narrow peak at this signal-to-noise (here by
-    # about 1 %), but the peak itself is kept.
-    assert abs(np.max(despiked.intensity) - np.max(clean.intensity)) / 800.0 < 0.02
-    assert abs(int(np.argmax(despiked.intensity)) - int(np.argmax(clean.intensity))) <= 1
+    # The peak top is left alone. Over 200 noise draws it is still trimmed in about 2 %: the
+    # curvature at the top of a peak this narrow sometimes takes the residual past 3 sd.
+    assert np.max(despiked.intensity) == np.max(clean.intensity)
+    assert int(np.argmax(despiked.intensity)) == int(np.argmax(clean.intensity))
 
 
 def test_despike_none_is_identity() -> None:
@@ -150,6 +150,23 @@ def test_despike_none_is_identity() -> None:
     y[np.flatnonzero(_in(LO, HI))[40]] += 5000.0
     prepared = prepare(_raw(y), AXIS, WINDOW, _pre(despike=None))
     np.testing.assert_array_equal(prepared.intensity, y[_in(LO, HI)])
+
+
+def test_despike_threshold_is_in_first_difference_sigmas() -> None:
+    y = _noisy(seed=3)
+    running = median_filter(y, size=3, mode="nearest")
+    sigma = NORMAL_MAD_SCALE * np.median(np.abs(np.diff(y) - np.median(np.diff(y)))) / np.sqrt(2)
+    expected = np.where(np.abs(y - running) > 3.0 * sigma, running, y)
+    np.testing.assert_allclose(despike(y, DESPIKE), expected)
+
+
+def test_despike_leaves_pure_noise_almost_untouched() -> None:
+    # A 3-point median residual is exactly 0 for a third of the samples and shrunk for the
+    # rest, so its own MAD is about 0.46 sigma and would flag some 13 % of pure noise.
+    changed = [
+        np.mean(despike(_noisy(seed, 5.0), DESPIKE) != _noisy(seed, 5.0)) for seed in range(20)
+    ]
+    assert np.mean(changed) < 0.01
 
 
 def test_despike_kernel_and_threshold() -> None:
