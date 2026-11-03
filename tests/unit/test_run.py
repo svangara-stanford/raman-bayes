@@ -1,18 +1,21 @@
 """Run models (DESIGN.md §7.1, §7.3, §7.4, §8.5): plan, task specs, statuses, submissions."""
 
+import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 from hypothesis import given
 from hypothesis import strategies as st
 from pydantic import BaseModel, ValidationError
 
 from raman_bayes.domain import run
 from raman_bayes.domain._base import DomainModel
-from raman_bayes.domain.priors import BaselineSpec, DespikeSpec, PreprocessingSpec
+from raman_bayes.domain.priors import PriorsSpec
+from raman_bayes.domain.priors_rules import priors_hash
 from raman_bayes.domain.run import (
     RunConfig,
     RunPlan,
@@ -21,7 +24,9 @@ from raman_bayes.domain.run import (
     TaskSpec,
     TaskState,
     TaskStatus,
+    task_ranges,
 )
+from raman_bayes.domain.uuid7 import uuid7
 
 # Copied by hand from DESIGN.md; never generated from the code under test.
 RUN_STATUS_VALUES = {
@@ -63,16 +68,23 @@ MODEL_KEYS: list[tuple[type[BaseModel], set[str]]] = [
     (
         RunPlan,
         {
+            "schema_version",
             "run_id",
+            "created_at",
             "dataset_id",
             "dataset_hash",
+            "dataset_uri",
+            "n_spectra",
+            "priors",
             "priors_hash",
             "engine",
+            "engine_version",
             "engine_config",
-            "preprocessing",
+            "backend",
             "profile",
             "resolved_config",
             "seed",
+            "spectra_per_task",
             "tasks",
         },
     ),
@@ -106,15 +118,12 @@ MODEL_KEYS: list[tuple[type[BaseModel], set[str]]] = [
     ),
 ]
 
-PROVISIONAL: list[type] = [RunConfig, TaskStatus, TaskState, SubmissionRecord]
+PROVISIONAL: list[type] = [TaskStatus, TaskState, SubmissionRecord]
 
-PREPROCESSING = PreprocessingSpec(
-    margin_cm1=25.0,
-    despike=DespikeSpec(method="median_mad", kernel=3, thresh=3.0),
-    baseline=BaselineSpec(method="als", lam=1.0e5, p=0.01),
-    smoothing=None,
-    clamp_nonnegative=True,
-)
+FIXTURE = Path(__file__).parents[1] / "fixtures" / "priors" / "design_example.yaml"
+PRIORS = PriorsSpec.model_validate(yaml.safe_load(FIXTURE.read_text(encoding="utf-8")))
+PRIORS_HASH = priors_hash(PRIORS)
+RUN_IDS = [str(uuid7()) for _ in range(5)]
 
 
 # ---------------------------------------------------------------- enums
@@ -229,20 +238,30 @@ json_objects = st.dictionaries(st.text(), json_values, max_size=4)
 utc_dt = st.datetimes(
     min_value=datetime(1990, 1, 1), max_value=datetime(2100, 1, 1), timezones=st.just(UTC)
 )
-task_specs = st.builds(TaskSpec, task_index=ints, spec_start=ints, spec_stop=ints)
-plans = st.builds(
-    RunPlan,
-    run_id=idents,
-    dataset_id=idents,
-    dataset_hash=idents,
-    priors_hash=idents,
-    engine=idents,
-    engine_config=json_objects,
-    preprocessing=st.just(PREPROCESSING),
-    profile=idents,
-    resolved_config=json_objects,
-    seed=st.integers(min_value=0, max_value=2**64 - 1),
-    tasks=st.lists(task_specs, max_size=5).map(tuple),
+sizes = st.integers(min_value=1, max_value=5000).flatmap(
+    lambda n: st.tuples(st.just(n), st.integers(min_value=1, max_value=n + 10))
+)
+plans = sizes.flatmap(
+    lambda ns: st.builds(
+        RunPlan,
+        run_id=st.sampled_from(RUN_IDS),
+        created_at=utc_dt,
+        dataset_id=idents,
+        dataset_hash=idents,
+        dataset_uri=idents,
+        n_spectra=st.just(ns[0]),
+        priors=st.just(PRIORS),
+        priors_hash=st.just(PRIORS_HASH),
+        engine=idents,
+        engine_version=idents,
+        engine_config=json_objects,
+        backend=st.sampled_from(["local", "slurm_array"]),
+        profile=idents,
+        resolved_config=json_objects,
+        seed=st.integers(min_value=0, max_value=2**63 - 1),
+        spectra_per_task=st.just(ns[1]),
+        tasks=st.just(task_ranges(*ns)),
+    )
 )
 submissions = st.builds(
     SubmissionRecord,
@@ -291,3 +310,104 @@ def test_run_config_json_round_trip() -> None:
         profile="local",
     )
     assert RunConfig.model_validate_json(config.model_dump_json()) == config
+
+
+# ---------------------------------------------------------------- RunConfig and RunPlan rules
+
+
+def _plan(**overrides: Any) -> dict[str, Any]:
+    fields: dict[str, Any] = {
+        "run_id": RUN_IDS[0],
+        "created_at": datetime(2026, 11, 2, 12, 0, tzinfo=UTC),
+        "dataset_id": "NMC811_v0-0123456789",
+        "dataset_hash": "ab" * 32,
+        "dataset_uri": "/data/datasets/NMC811_v0-0123456789.zarr",
+        "n_spectra": 25,
+        "priors": PRIORS,
+        "priors_hash": PRIORS_HASH,
+        "engine": "mock",
+        "engine_version": "0.1.0",
+        "engine_config": {"n_iter": 6000, "burn_in": 3000, "thin": 5, "options": {}},
+        "backend": "local",
+        "profile": "local",
+        "resolved_config": {},
+        "seed": 7,
+        "spectra_per_task": 16,
+        "tasks": [(0, 0, 16), (1, 16, 25)],
+    }
+    fields |= overrides
+    fields["tasks"] = [
+        {"task_index": k, "spec_start": a, "spec_stop": b} for k, a, b in fields["tasks"]
+    ]
+    return fields
+
+
+def _error_types(fields: dict[str, Any]) -> set[str]:
+    with pytest.raises(ValidationError) as exc:
+        RunPlan.model_validate(fields)
+    return {e["type"] for e in exc.value.errors()}
+
+
+def test_valid_plan_and_schema_version() -> None:
+    plan = RunPlan.model_validate(_plan())
+    assert plan.schema_version == "1.0"
+    assert plan.tasks == task_ranges(25, 16)
+
+
+@pytest.mark.parametrize(
+    "tasks",
+    [
+        [(0, 0, 16)],  # does not reach n_spectra
+        [(0, 0, 16), (1, 17, 25)],  # gap
+        [(0, 0, 16), (1, 15, 25)],  # overlap
+        [(1, 0, 16), (0, 16, 25)],  # out of order
+        [(0, 0, 10), (1, 10, 25)],  # not k * spectra_per_task
+        [(0, 0, 16), (1, 16, 26)],  # beyond n_spectra
+        [],
+    ],
+)
+def test_run_plan_tasks_must_partition_n_spectra(tasks: list[tuple[int, int, int]]) -> None:
+    assert "tasks_not_partition" in _error_types(_plan(tasks=tasks))
+
+
+def test_run_plan_priors_hash_must_match() -> None:
+    assert "priors_hash_mismatch" in _error_types(_plan(priors_hash="0" * 64))
+
+
+@pytest.mark.parametrize(
+    "run_id",
+    [str(uuid.uuid4()), RUN_IDS[0].upper(), RUN_IDS[0].replace("-", ""), "run-1"],
+)
+def test_run_plan_run_id_must_be_uuid7(run_id: str) -> None:
+    assert "run_id_not_uuid7" in _error_types(_plan(run_id=run_id))
+
+
+def test_run_plan_created_at_must_be_aware() -> None:
+    assert "timezone_aware" in _error_types(_plan(created_at=datetime(2026, 11, 2, 12, 0)))
+
+
+def test_seed_range() -> None:
+    config = {"dataset_id": "d", "priors_path": "p.yaml", "engine": "mock", "profile": "local"}
+    for ok in (0, 2**63 - 1):
+        assert RunConfig.model_validate({**config, "seed": ok}).seed == ok
+        assert RunPlan.model_validate(_plan(seed=ok)).seed == ok
+    for bad in (-1, 2**63):
+        with pytest.raises(ValidationError):
+            RunConfig.model_validate({**config, "seed": bad})
+        with pytest.raises(ValidationError):
+            RunPlan.model_validate(_plan(seed=bad))
+
+
+def test_run_config_spectra_per_task_at_least_1() -> None:
+    config = {"dataset_id": "d", "priors_path": "p.yaml", "engine": "mock", "profile": "local"}
+    assert RunConfig.model_validate({**config, "spectra_per_task": 1}).spectra_per_task == 1
+    with pytest.raises(ValidationError):
+        RunConfig.model_validate({**config, "spectra_per_task": 0})
+    with pytest.raises(ValidationError):
+        RunPlan.model_validate(_plan(spectra_per_task=0, tasks=[]))
+
+
+def test_run_config_and_run_plan_not_provisional() -> None:
+    for model in (RunConfig, RunPlan):
+        assert model.__doc__ is not None
+        assert "provisional" not in model.__doc__.lower(), model.__name__

@@ -48,7 +48,9 @@ __all__ = [
     "SpectrumRowCountError",
     "SpectrumScanMismatchError",
     "StaleStatusError",
+    "TaskSizeRequiredError",
     "TimeSeriesNotSupportedError",
+    "TooManyTasksError",
     "UnknownEngineError",
     "UnknownProfileError",
     "UnknownRunError",
@@ -311,6 +313,29 @@ class InvalidEngineError(InputError):
 
     def __init__(self, name: str, target: str) -> None:
         super().__init__(f"engine {name!r} ({target}) does not provide a peak engine")
+
+
+# ---------------------------------------------------------------- plans
+
+
+class TooManyTasksError(InputError):
+    """An explicit task size gives more tasks than the backend allows."""
+
+    def __init__(self, n_tasks: int, spectra_per_task: int, max_tasks: int) -> None:
+        super().__init__(
+            f"{spectra_per_task} spectra per task gives {n_tasks} tasks, more than the backend's "
+            f"limit of {max_tasks}; use a larger --spectra-per-task"
+        )
+
+
+class TaskSizeRequiredError(InputError):
+    """The backend cannot choose a task size by itself."""
+
+    def __init__(self, backend: str) -> None:
+        super().__init__(
+            f"the {backend} backend needs --spectra-per-task; "
+            "choosing a task size from a benchmark is not supported yet"
+        )
 
 
 # ---------------------------------------------------------------- legacy priors CSV

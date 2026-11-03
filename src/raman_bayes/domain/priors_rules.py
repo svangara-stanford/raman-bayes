@@ -1,6 +1,7 @@
-"""The file-level priors rules (DESIGN.md §5 rules 1-7) and the priors hash (rule 9).
+"""The priors rules (DESIGN.md §5): file-level rules 1-7, rule 8 on a dataset axis, rule 9 hash.
 
-Rule 8 needs a dataset axis and runs at plan time. Every rule reports every violation it finds,
+Rule 8 needs a dataset axis and runs at plan time (``check_axis``). Every rule reports every
+violation it finds,
 so a user fixes a file in one pass. ``check_window`` holds the rules that need only one window,
 so an imported window fragment can be checked before it joins a file. Ids are unique within
 their kind (windows, peaks across all windows, end members): the §5 example names both a
@@ -16,16 +17,21 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Literal
 
+import numpy as np
+import numpy.typing as npt
+
 from raman_bayes.domain.priors import Bounds, Peak, PriorsSpec, Window
 
 __all__ = [
     "ID_PATTERN",
     "KNOWN_SCHEMA_VERSIONS",
     "MIN_SMOOTHING_WINDOW",
+    "MIN_WINDOW_CHANNELS",
     "Finding",
     "RuleReport",
     "Severity",
     "canonical_json",
+    "check_axis",
     "check_rules",
     "check_window",
     "priors_hash",
@@ -33,6 +39,7 @@ __all__ = [
 
 KNOWN_SCHEMA_VERSIONS = frozenset({"1.0"})
 MIN_SMOOTHING_WINDOW = 3
+MIN_WINDOW_CHANNELS = 32
 ID_PATTERN = re.compile(r"[a-z][a-z0-9_]{0,31}")  # always fullmatch: "$" would accept "id\n"
 
 Severity = Literal["error", "warning"]
@@ -88,6 +95,46 @@ def _window_findings(window: Window) -> Iterator[Finding]:
     yield from _rule2(window)
     yield from _rule3(window)
     yield from _rule5(window)
+
+
+def check_axis(spec: PriorsSpec, wavenumber: npt.NDArray[np.float64]) -> RuleReport:
+    """Apply rule 8 to every window of ``spec`` on an ascending dataset axis; never raises.
+
+    Each window must cover at least ``MIN_WINDOW_CHANNELS`` channels, lie within the axis
+    once widened by ``margin_cm1``, and, when smoothing is set, its widened segment must hold
+    at least ``smoothing.window`` channels. Channel ranges include their bounds.
+    """
+    return RuleReport(tuple(f for window in spec.windows for f in _rule8(spec, window, wavenumber)))
+
+
+def _rule8(spec: PriorsSpec, window: Window, axis: npt.NDArray[np.float64]) -> Iterator[Finding]:
+    lo, hi = window.range_cm1
+    margin = spec.preprocessing.margin_cm1
+    smoothing = spec.preprocessing.smoothing
+    channels = int(np.count_nonzero((axis >= lo) & (axis <= hi)))
+    if channels < MIN_WINDOW_CHANNELS:
+        yield Finding(
+            8,
+            "error",
+            f"window {window.id}: range_cm1 {list(window.range_cm1)} covers {channels} channels "
+            f"of the dataset axis; at least {MIN_WINDOW_CHANNELS} are needed",
+        )
+    if lo - margin < axis[0] or hi + margin > axis[-1]:
+        yield Finding(
+            8,
+            "error",
+            f"window {window.id}: range_cm1 widened by margin_cm1 ({margin:g}) spans "
+            f"[{lo - margin:g}, {hi + margin:g}], beyond the dataset axis "
+            f"[{axis[0]:g}, {axis[-1]:g}]",
+        )
+    widened = int(np.count_nonzero((axis >= lo - margin) & (axis <= hi + margin)))
+    if smoothing is not None and widened < smoothing.window:
+        yield Finding(
+            8,
+            "error",
+            f"window {window.id}: range_cm1 widened by margin_cm1 covers {widened} channels, "
+            f"fewer than smoothing.window ({smoothing.window})",
+        )
 
 
 def canonical_json(spec: PriorsSpec) -> bytes:

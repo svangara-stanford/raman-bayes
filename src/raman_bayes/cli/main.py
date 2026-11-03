@@ -14,10 +14,12 @@ import typer
 from raman_bayes.app import catalog_views, priors_csv, validate
 from raman_bayes.app.ingest import IngestRequest, ScanOutcome, ScanStatus
 from raman_bayes.app.ingest import ingest as ingest_scans
+from raman_bayes.app.plan import RUN_PLAN_FILE, plan_run
 from raman_bayes.cli.output import CliEnvelope, ExitCode, emit
-from raman_bayes.cli.reports import ingest_report
-from raman_bayes.config.settings import LoadedSettings, load_settings
-from raman_bayes.domain.errors import ConfigError
+from raman_bayes.cli.reports import ingest_report, plan_report
+from raman_bayes.config.settings import LoadedSettings, load_settings, requested_profile
+from raman_bayes.domain.errors import ConfigError, DatasetStoreError
+from raman_bayes.domain.run import SEED_LIMIT, RunConfig
 
 JsonOpt = Annotated[
     bool,
@@ -80,6 +82,17 @@ def _finish(envelope: CliEnvelope, as_json: bool) -> NoReturn:
 def _succeed(command: str, message: str, data: dict[str, Any], as_json: bool) -> NoReturn:
     envelope = CliEnvelope(
         command=command, exit_code=ExitCode.OK, ok=True, message=message, data=data
+    )
+    _finish(envelope, as_json)
+
+
+def _infrastructure(command: str, error: Exception, as_json: bool) -> NoReturn:
+    envelope = CliEnvelope(
+        command=command,
+        exit_code=ExitCode.BACKEND,
+        ok=False,
+        message=f"raman {command}: storage problem",
+        errors=(str(error),),
     )
     _finish(envelope, as_json)
 
@@ -299,16 +312,60 @@ def priors_export_csv(
 def plan(
     dataset: Annotated[str, typer.Option("--dataset", help="Dataset id.")],
     priors: Annotated[Path, typer.Option("--priors", help="priors.yaml.")],
-    engine: Annotated[str, typer.Option("--engine", help="Engine name.")] = "mock",
+    engine: Annotated[
+        str | None, typer.Option("--engine", help="Engine name (default: the profile's).")
+    ] = None,
     spectra_per_task: Annotated[
         int | None,
-        typer.Option("--spectra-per-task", min=1, help="Override the benchmarked task size."),
+        typer.Option("--spectra-per-task", min=1, help="Spectra per task, used as given."),
+    ] = None,
+    seed: Annotated[
+        int | None,
+        typer.Option("--seed", min=0, max=SEED_LIMIT - 1, help="Run seed (default: random)."),
     ] = None,
     profile: ProfileOpt = None,
     as_json: JsonOpt = False,
 ) -> None:
-    """Write run_plan.json; print tasks, core-hour estimate and sbatch preview."""
-    _stub("plan", as_json)
+    """Write run_plan.json and record the run; print its tasks."""
+    loaded = _settings("plan", profile, as_json)
+    config = RunConfig(
+        dataset_id=dataset,
+        priors_path=priors,
+        engine=engine or loaded.settings.engine.name,
+        spectra_per_task=spectra_per_task,
+        seed=seed,
+        profile=requested_profile(profile),
+    )
+    try:
+        result = plan_run(config, loaded)
+    except DatasetStoreError as exc:
+        _infrastructure("plan", exc, as_json)
+    if result.plan is None or result.run_dir is None:
+        _finish(_invalid("plan", "cannot plan this run", result.errors, result.warnings), as_json)
+    planned = result.plan
+    data = {
+        "run_id": planned.run_id,
+        "run_dir": str(result.run_dir),
+        "run_plan": str(result.run_dir / RUN_PLAN_FILE),
+        "dataset_id": planned.dataset_id,
+        "priors_hash": planned.priors_hash,
+        "engine": planned.engine,
+        "engine_version": planned.engine_version,
+        "backend": planned.backend,
+        "seed": planned.seed,
+        "spectra_per_task": planned.spectra_per_task,
+        "n_tasks": len(planned.tasks),
+        "tasks": [t.model_dump() for t in planned.tasks],
+    }
+    envelope = CliEnvelope(
+        command="plan",
+        exit_code=ExitCode.OK,
+        ok=True,
+        message=plan_report(planned, result.run_dir / RUN_PLAN_FILE),
+        data=data,
+        warnings=result.warnings,
+    )
+    _finish(envelope, as_json)
 
 
 @app.command()

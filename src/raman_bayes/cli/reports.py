@@ -5,15 +5,19 @@ what a person reads.
 """
 
 from collections.abc import Sequence
+from pathlib import Path
 
 from raman_bayes.app.ingest import IngestPreview, ScanOutcome, ScanStatus
 from raman_bayes.domain.dataset import AxisSpec
+from raman_bayes.domain.run import RunPlan
 
-__all__ = ["ingest_report"]
+__all__ = ["ingest_report", "plan_report"]
+
+_TASKS_SHOWN = 20  # a Slurm plan may have hundreds; the JSON envelope lists them all
 
 
 def ingest_report(outcomes: Sequence[ScanOutcome]) -> str:
-    """One paragraph per scan folder: what was ingested, skipped, previewed or refused."""
+    """Describe each scan folder: what was ingested, skipped, previewed or refused."""
     return "\n".join(_outcome_lines(o) for o in outcomes)
 
 
@@ -55,3 +59,22 @@ def _axis(axis: AxisSpec) -> str:
     if axis.step_um == 0:
         return f"at {axis.start_um:g} um"
     return f"{axis.start_um:g} to {axis.stop_um:g} um, step {axis.step_um:g}"
+
+
+def plan_report(plan: RunPlan, run_plan: Path) -> str:
+    """Describe a planned run: its identity, engine, backend and seed, and its first 20 tasks."""
+    spec = plan.priors.spec
+    lines = [
+        f"planned run {plan.run_id}: {len(plan.tasks)} tasks of up to {plan.spectra_per_task} "
+        f"spectra, {plan.n_spectra} spectra in all",
+        f"  dataset {plan.dataset_id}; priors {spec.name} {spec.version} ({spec.status}); "
+        f"engine {plan.engine} {plan.engine_version}; backend {plan.backend}; seed {plan.seed}",
+        f"  plan written to {run_plan}",
+        *(
+            f"  task {t.task_index}: spectra {t.spec_start}-{t.spec_stop - 1}"
+            for t in plan.tasks[:_TASKS_SHOWN]
+        ),
+    ]
+    if len(plan.tasks) > _TASKS_SHOWN:
+        lines.append(f"  ... and {len(plan.tasks) - _TASKS_SHOWN} more tasks")
+    return "\n".join(lines)

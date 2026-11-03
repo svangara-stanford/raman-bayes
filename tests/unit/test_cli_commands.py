@@ -50,6 +50,7 @@ NAMES = list(COMMANDS)
 # Commands built so far; each one has its own test module.
 IMPLEMENTED = {
     "ingest",
+    "plan",
     "validate-priors",
     "priors import-csv",
     "priors export-csv",

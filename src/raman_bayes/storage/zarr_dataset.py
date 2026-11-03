@@ -145,13 +145,18 @@ class StoredDataset:
     manifest: DatasetManifest
     _group: zarr.Group = field(repr=False, compare=False)
 
+    def wavenumber(self) -> npt.NDArray[np.float64]:
+        """Return the dataset axis alone, without reading any spectra."""
+        axis: npt.NDArray[np.float64] = self._array("wavenumber")[:]
+        return axis
+
     def read(self, start: int = 0, stop: int | None = None) -> DatasetArrays:
         """Return spectra ``start`` to ``stop`` (exclusive; default all) and the shared arrays."""
         rows = slice(start, stop)
         per_spectrum = {name: self._array(name)[rows] for name in _PER_SPECTRUM}
         return DatasetArrays(
             intensity=self._array("intensity")[rows],
-            wavenumber=self._array("wavenumber")[:],
+            wavenumber=self.wavenumber(),
             source_file=tuple(str(name) for name in self._array("source_file")[rows]),
             grid_mask=self._array("grid_mask")[...],
             **per_spectrum,

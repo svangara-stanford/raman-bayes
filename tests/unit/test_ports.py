@@ -4,16 +4,20 @@ import dataclasses
 import inspect
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
+from pathlib import Path
 
 import numpy as np
 import pytest
+import yaml
 
-from raman_bayes.domain.priors import BaselineSpec, PreprocessingSpec, Window
+from raman_bayes.domain.priors import PriorsSpec, Window
+from raman_bayes.domain.priors_rules import priors_hash
 from raman_bayes.domain.results import WindowFitResult
 from raman_bayes.domain.run import RunPlan, SubmissionRecord, TaskSpec, TaskState, TaskStatus
 from raman_bayes.ports.backend import ExecutionBackend
 from raman_bayes.ports.engine import EngineConfig, PeakEngine, PreparedSpectrum
 
+PRIORS_FIXTURE = Path(__file__).parents[1] / "fixtures" / "priors" / "design_example.yaml"
 WINDOW = Window.model_validate(
     {
         "id": "lithiation",
@@ -245,23 +249,24 @@ def test_backend_without_resubmit_is_rejected() -> None:
 
 def test_dummy_backend_satisfies_protocol() -> None:
     backend: ExecutionBackend = DummyBackend()  # checked by mypy in lint
+    priors = PriorsSpec.model_validate(yaml.safe_load(PRIORS_FIXTURE.read_text(encoding="utf-8")))
     plan = RunPlan(
         run_id="0190b3d4-0000-7000-8000-000000000000",
+        created_at=datetime(2026, 10, 23, tzinfo=UTC),
         dataset_id="NMC811_v0-0123456789",
         dataset_hash="h",
-        priors_hash="p",
+        dataset_uri="/data/datasets/NMC811_v0-0123456789.zarr",
+        n_spectra=25,
+        priors=priors,
+        priors_hash=priors_hash(priors),
         engine="mock",
+        engine_version="0.1.0",
         engine_config={},
-        preprocessing=PreprocessingSpec(
-            margin_cm1=25.0,
-            despike=None,
-            baseline=BaselineSpec(method="als", lam=1.0e5, p=0.01),
-            smoothing=None,
-            clamp_nonnegative=True,
-        ),
+        backend="local",
         profile="local",
         resolved_config={},
         seed=1,
+        spectra_per_task=1024,
         tasks=(TaskSpec(task_index=0, spec_start=0, spec_stop=25),),
     )
     record = backend.submit(plan, dry_run=True)
