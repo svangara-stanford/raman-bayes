@@ -67,4 +67,4 @@ jobs:
           "$venv/python" -c "import raman_bayes"
           "$venv/python" -c "from importlib.resources import files; assert files('raman_bayes.config').joinpath('profiles', 'local.yaml').is_file()"
           set +e; "$venv/raman" doctor --json; code=$?; set -e
-          test "$code" -eq 3
+          test "$code" -eq 0
