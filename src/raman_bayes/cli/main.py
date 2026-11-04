@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Annotated, Any, NoReturn, TypeVar
 
 import typer
+from typer.core import TyperGroup
 
 from raman_bayes.app import catalog_views, priors_csv, validate
 from raman_bayes.app.collect import CollectRequest, CollectStatus, collect_run
@@ -44,12 +45,11 @@ from raman_bayes.cli.reports import (
     submit_report,
     task_report,
 )
+from raman_bayes.cli.root import RootGroup
 from raman_bayes.config.settings import LoadedSettings, load_settings, requested_profile
 from raman_bayes.domain.errors import (
     ConfigError,
-    DatasetStoreError,
     InputError,
-    RamanBayesError,
     TaskLockedError,
 )
 from raman_bayes.domain.run import SEED_LIMIT, RunConfig, RunPlan, RunStatus
@@ -67,16 +67,17 @@ RunArg = Annotated[str, typer.Argument(metavar="RUN", help="Run id.")]
 _T = TypeVar("_T")
 
 
-def _typer(help_: str) -> typer.Typer:
+def _typer(help_: str, cls: type[TyperGroup] = TyperGroup) -> typer.Typer:
     return typer.Typer(
         help=help_,
+        cls=cls,
         no_args_is_help=True,
         rich_markup_mode=None,
         pretty_exceptions_enable=False,
     )
 
 
-app = _typer("Bayesian Raman peak-detection pipeline.")
+app = _typer("Bayesian Raman peak-detection pipeline.", RootGroup)
 datasets_app = _typer("Inspect ingested datasets.")
 priors_app = _typer("Convert priors between YAML and the legacy CSV format.")
 runs_app = _typer("Inspect and register runs.")
@@ -117,17 +118,6 @@ def _succeed(
         message=message,
         data=data,
         warnings=warnings,
-    )
-    _finish(envelope, as_json)
-
-
-def _infrastructure(command: str, problem: str, error: Exception, as_json: bool) -> NoReturn:
-    envelope = CliEnvelope(
-        command=command,
-        exit_code=ExitCode.BACKEND,
-        ok=False,
-        message=f"raman {command}: {problem}",
-        errors=(str(error),),
     )
     _finish(envelope, as_json)
 
@@ -383,10 +373,7 @@ def plan(
         seed=seed,
         profile=requested_profile(profile),
     )
-    try:
-        result = plan_run(config, loaded)
-    except DatasetStoreError as exc:
-        _infrastructure("plan", "storage problem", exc, as_json)
+    result = plan_run(config, loaded)
     if result.plan is None or result.run_dir is None:
         _finish(_invalid("plan", "cannot plan this run", result.errors, result.warnings), as_json)
     envelope = CliEnvelope(
@@ -452,8 +439,6 @@ def _driver(command: str, call: Callable[[], _T], as_json: bool) -> _T:
             errors=(str(exc),),
         )
         _finish(envelope, as_json)
-    except (RamanBayesError, OSError) as exc:
-        _infrastructure(command, "storage or backend problem", exc, as_json)
 
 
 def _submit_envelope(
@@ -527,8 +512,6 @@ def run_task(
         outcome = run_one_task(request)
     except InputError as exc:
         _finish(_invalid("run-task", "cannot run this task", (str(exc),), ()), as_json)
-    except (RamanBayesError, OSError) as exc:
-        _infrastructure("run-task", "task stopped", exc, as_json)
     _finish(_task_envelope(run, outcome), as_json)
 
 

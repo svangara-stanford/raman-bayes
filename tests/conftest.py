@@ -41,7 +41,7 @@ from raman_bayes.storage.zarr_dataset import (
     write_dataset,
 )
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tests" / "fixtures"
 MINI = FIXTURES / "nanofinder_mini" / "NMC811_v0"
 DESIGN_EXAMPLE = FIXTURES / "priors" / "design_example.yaml"
@@ -162,16 +162,19 @@ def synthetic_store(tmp_path: Path) -> Callable[..., Path]:
     """Build a store of ``n`` synthetic spectra on the real axis; ``flags`` sets QC bits by id.
 
     Even spectra carry peaks at 465 and 568 cm^-1 (60 counts over noise of sd 3 on a sloped
-    baseline); odd spectra are baseline and noise only, so their peaks come out absent.
+    baseline); odd spectra are baseline and noise only. ``counts`` replaces the intensities.
     """
 
-    def build(n: int, *, flags: Mapping[int, int] | None = None) -> Path:
+    def build(
+        n: int, *, flags: Mapping[int, int] | None = None, counts: np.ndarray | None = None
+    ) -> Path:
         info = parse_info(MINI / f"{MINI.name}-Info.txt")
         rng = np.random.default_rng(n)
         axis = np.linspace(-41.55539, 1945.8536, info.n_wn)
         peaks = 60 * (np.exp(-(((axis - 465) / 15) ** 2)) + np.exp(-(((axis - 568) / 15) ** 2)))
         signal = np.where((np.arange(n) % 2 == 0)[:, None], peaks, 0.0)
-        counts = np.rint(200 + 0.05 * axis + signal + rng.normal(0, 3, (n, axis.size)))
+        if counts is None:
+            counts = np.rint(200 + 0.05 * axis + signal + rng.normal(0, 3, (n, axis.size)))
         qc = np.zeros(n, dtype=np.uint16)
         for spectrum_id, bits in (flags or {}).items():
             qc[spectrum_id] = bits

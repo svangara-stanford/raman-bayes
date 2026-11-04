@@ -111,10 +111,11 @@ plugins = ["pydantic.mypy"]
 files = ["src", "tests", "scripts"]
 mypy_path = "src"
 
-# pyarrow and scipy ship no type hints (no py.typed); scope the ignore to those two only.
-# scipy-stubs exists but would be another dependency.
+# pyarrow, scipy and jsonschema (a dev dependency for the CLI schema tests) ship no type hints
+# (no py.typed); scope the ignore to those three only. scipy-stubs and types-jsonschema exist
+# but would be more dependencies.
 [[tool.mypy.overrides]]
-module = ["pyarrow", "pyarrow.*", "scipy", "scipy.*"]
+module = ["pyarrow", "pyarrow.*", "scipy", "scipy.*", "jsonschema", "jsonschema.*"]
 ignore_missing_imports = true
 
 [tool.pydantic-mypy]

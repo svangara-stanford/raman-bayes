@@ -7,10 +7,14 @@ The design is in [docs/DESIGN.md](https://github.com/svangara-stanford/raman-bay
 
 ## Status
 
-**Phase 0 (scaffold).** The package layout, domain models, port protocols, logging, CI and
-the `raman` command line are in place. Every command is still a stub that exits with code 3.
-Ingest, fitting (with a mock engine) and export arrive in Phase 1; the real Bayesian engine
-comes later.
+**Phase 1 (core pipeline, local).** The whole pipeline runs on one machine with a mock
+engine: `raman ingest` packs Nanofinder scans into Zarr, `raman plan` freezes a run,
+`raman submit` (or `raman run`) fits every spectrum in parallel processes, `raman collect`
+merges the results into Parquet with a run manifest, and `raman export` writes the legacy
+per-window CSVs or a flat CSV. `raman status`, `cancel`, `runs import` and `doctor` complete
+the command line; every command takes `--json`. The mock engine is a deterministic stand-in
+with the real engine's interface, so its presence probabilities say nothing about the
+sample. The Slurm backend (Sherlock) is the next phase; the real Bayesian engine comes after.
 
 ## Quickstart (development)
 
@@ -46,6 +50,44 @@ The full sample archives are not in the repository (`data/` is gitignored).
 - The legacy priors CSVs live in `configs/priors/legacy/` (`nmc_lithiation.csv`,
   `nmc_carbon.csv`).
 - Unit tests use only the small fixtures under `tests/fixtures/`.
+
+## Full-data smoke
+
+A check of throughput and plumbing on the full sample archives, run by hand (not in CI):
+both archives, 5 datasets, 11,250 spectra, each fitted with the mock engine in the two
+windows of `configs/priors/nmc_commercial.yaml`. It should take under 3 minutes on a laptop.
+The scans carry no detectable carbon, so this shows the pipeline works, not carbon detection.
+
+With `NMC811-Exported-Data` and `NMC111-Exported-Data` unzipped into `data/raw/`, and the
+state kept apart from your own under `data/smoke/` (gitignored):
+
+```bash
+export RAMAN_PATHS__DATA_ROOT="$PWD/data/smoke/datasets"
+export RAMAN_PATHS__RUNS_ROOT="$PWD/data/smoke/runs"
+export RAMAN_PATHS__CATALOG="$PWD/data/smoke/catalog.sqlite"
+pixi run raman ingest data/raw/NMC811-Exported-Data   # NMC811_v0, v1, v2
+pixi run raman ingest data/raw/NMC111-Exported-Data   # NMC111_v1, v2
+pixi run raman datasets list                          # 5 datasets, 11,250 spectra in all
+datasets=$(pixi run -q raman datasets list --json | pixi run -q python -c \
+  "import json, sys; print(*(d['dataset_id'] for d in json.load(sys.stdin)['data']['datasets']))")
+for dataset in $datasets; do
+  run=$(pixi run -q raman run --dataset "$dataset" --priors configs/priors/nmc_commercial.yaml \
+    --json | pixi run -q python -c "import json, sys; print(json.load(sys.stdin)['data']['run_id'])")
+  pixi run raman collect "$run"
+done
+```
+
+Every run should end complete and collected: 22,500 fits and 45,000 peak rows, with
+NMC811_v1's one saturated spectrum `skipped_qc` in both windows. Then compare the
+presence-probability distributions of NMC111 and NMC811, which should be alike despite the
+roughly threefold difference in intensity (DuckDB is in the development environment):
+
+```bash
+pixi run python -c "import duckdb; duckdb.sql(\"SELECT substr(dataset_id, 1, 6) AS sample, \
+  peak_id, median(presence_prob) AS median_presence \
+  FROM 'data/smoke/runs/*/results/peaks.parquet' WHERE fit_status = 'ok' \
+  GROUP BY ALL ORDER BY peak_id, sample\").show()"
+```
 
 ## Citation
 
