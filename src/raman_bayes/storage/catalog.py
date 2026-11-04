@@ -26,7 +26,7 @@ from raman_bayes.domain.errors import (
     UnsupportedCatalogError,
 )
 from raman_bayes.domain.priors import PriorsSpec
-from raman_bayes.domain.run import RunStatus, TaskSpec, TaskState, TaskStatus
+from raman_bayes.domain.run import IN_FLIGHT, RunStatus, TaskSpec, TaskState, TaskStatus
 
 __all__ = [
     "BUSY_TIMEOUT_S",
@@ -58,7 +58,6 @@ RUN_TRANSITIONS: frozenset[tuple[RunStatus, RunStatus]] = frozenset(
         (_S.FAILED, _S.CANCELLED),
     }
 )
-_IN_FLIGHT = frozenset({TaskStatus.PENDING, TaskStatus.RUNNING})
 
 
 def _one_of(enum: type[RunStatus] | type[TaskStatus]) -> str:
@@ -422,7 +421,7 @@ def _implied(current: RunStatus, tasks: Sequence[TaskStatus]) -> RunStatus | Non
         return RunStatus.RUNNING
     if current is RunStatus.RUNNING and all(s is TaskStatus.DONE for s in tasks):
         return RunStatus.COMPLETE
-    stopped = not any(s in _IN_FLIGHT for s in tasks)
+    stopped = not any(s in IN_FLIGHT for s in tasks)
     unfinished = not all(s is TaskStatus.DONE for s in tasks)
     if current in (RunStatus.SUBMITTED, RunStatus.RUNNING) and stopped and unfinished:
         return RunStatus.FAILED

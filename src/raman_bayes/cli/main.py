@@ -5,10 +5,11 @@ GITHUB_ACTIONS, FORCE_COLOR or PY_COLORS is set, which would put ANSI into piped
 Command output goes through ``output.make_console``, which is colour-free off a TTY.
 """
 
+from collections.abc import Callable
 from datetime import timedelta
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Any, NoReturn
+from typing import Annotated, Any, NoReturn, TypeVar
 
 import typer
 
@@ -18,11 +19,34 @@ from raman_bayes.app.ingest import ingest as ingest_scans
 from raman_bayes.app.plan import RUN_PLAN_FILE, plan_run
 from raman_bayes.app.run_task import RunTaskStatus, TaskOutcome, TaskRequest
 from raman_bayes.app.run_task import run_task as run_one_task
+from raman_bayes.app.status import RunView, refresh_run, watch_run
+from raman_bayes.app.submit import (
+    CancelStatus,
+    SubmitRequest,
+    SubmitResult,
+    SubmitStatus,
+    cancel_run,
+    run_local,
+    submit_run,
+)
 from raman_bayes.cli.output import CliEnvelope, ExitCode, emit
-from raman_bayes.cli.reports import ingest_report, plan_report, qc_summary, task_report
+from raman_bayes.cli.reports import (
+    ingest_report,
+    plan_report,
+    qc_summary,
+    status_report,
+    submit_report,
+    task_report,
+)
 from raman_bayes.config.settings import LoadedSettings, load_settings, requested_profile
-from raman_bayes.domain.errors import ConfigError, DatasetStoreError, InputError, RamanBayesError
-from raman_bayes.domain.run import SEED_LIMIT, RunConfig
+from raman_bayes.domain.errors import (
+    ConfigError,
+    DatasetStoreError,
+    InputError,
+    RamanBayesError,
+    TaskLockedError,
+)
+from raman_bayes.domain.run import SEED_LIMIT, RunConfig, RunPlan, RunStatus
 from raman_bayes.logging import setup_logging
 
 JsonOpt = Annotated[
@@ -34,6 +58,7 @@ ProfileOpt = Annotated[
     typer.Option("--profile", help="Profile name or path (default: $RAMAN_PROFILE, else local)."),
 ]
 RunArg = Annotated[str, typer.Argument(metavar="RUN", help="Run id.")]
+_T = TypeVar("_T")
 
 
 def _typer(help_: str) -> typer.Typer:
@@ -360,11 +385,22 @@ def plan(
         _infrastructure("plan", "storage problem", exc, as_json)
     if result.plan is None or result.run_dir is None:
         _finish(_invalid("plan", "cannot plan this run", result.errors, result.warnings), as_json)
-    planned = result.plan
-    data = {
+    envelope = CliEnvelope(
+        command="plan",
+        exit_code=ExitCode.OK,
+        ok=True,
+        message=plan_report(result.plan, result.run_dir / RUN_PLAN_FILE),
+        data=_plan_data(result.plan, result.run_dir),
+        warnings=result.warnings,
+    )
+    _finish(envelope, as_json)
+
+
+def _plan_data(planned: RunPlan, run_dir: Path) -> dict[str, Any]:
+    return {
         "run_id": planned.run_id,
-        "run_dir": str(result.run_dir),
-        "run_plan": str(result.run_dir / RUN_PLAN_FILE),
+        "run_dir": str(run_dir),
+        "run_plan": str(run_dir / RUN_PLAN_FILE),
         "dataset_id": planned.dataset_id,
         "priors_hash": planned.priors_hash,
         "engine": planned.engine,
@@ -375,15 +411,6 @@ def plan(
         "n_tasks": len(planned.tasks),
         "tasks": [t.model_dump() for t in planned.tasks],
     }
-    envelope = CliEnvelope(
-        command="plan",
-        exit_code=ExitCode.OK,
-        ok=True,
-        message=plan_report(planned, result.run_dir / RUN_PLAN_FILE),
-        data=data,
-        warnings=result.warnings,
-    )
-    _finish(envelope, as_json)
 
 
 @app.command()
@@ -397,8 +424,58 @@ def submit(
     profile: ProfileOpt = None,
     as_json: JsonOpt = False,
 ) -> None:
-    """Submit a planned run to its backend."""
-    _stub("submit", as_json)
+    """Submit a planned run to its backend; on the local backend, wait for it."""
+    if dry_run and confirm:
+        refused = ("--dry-run and --confirm cannot be used together",)
+        _finish(_invalid("submit", "cannot submit", refused, ()), as_json)
+    loaded = _settings("submit", profile, as_json)
+    request = SubmitRequest(run, dry_run=dry_run, resubmit_failed=resubmit_failed)
+    result = _driver("submit", lambda: submit_run(request, loaded), as_json)
+    _finish(_submit_envelope("submit", result, resubmit_failed, {}), as_json)
+
+
+def _driver(command: str, call: Callable[[], _T], as_json: bool) -> _T:
+    try:
+        return call()
+    except InputError as exc:
+        _finish(_invalid(command, f"cannot {command} this run", (str(exc),), ()), as_json)
+    except TaskLockedError as exc:
+        envelope = CliEnvelope(
+            command=command,
+            exit_code=ExitCode.NOTHING_TO_DO,
+            ok=False,
+            message=f"raman {command}: another process is running this run's tasks",
+            errors=(str(exc),),
+        )
+        _finish(envelope, as_json)
+    except (RamanBayesError, OSError) as exc:
+        _infrastructure(command, "run stopped", exc, as_json)
+
+
+def _submit_envelope(
+    command: str, result: SubmitResult, resubmit: bool, extra: dict[str, Any]
+) -> CliEnvelope:
+    stopped = result.run.status in (RunStatus.FAILED, RunStatus.CANCELLED)
+    if result.status is SubmitStatus.NOTHING_TO_DO:
+        code = ExitCode.NOTHING_TO_DO
+    else:
+        code = ExitCode.BACKEND if stopped else ExitCode.OK
+    data: dict[str, Any] = {
+        **extra,
+        "run_id": result.run.run_id,
+        "status": result.status.value,
+        "run_status": result.run.status.value,
+        "record": result.record.model_dump(mode="json") if result.record else None,
+        "tasks": [t.as_json() for t in result.tasks],
+        "failures": [{"task_index": i, "error": e} for i, e in sorted(result.failures.items())],
+    }
+    return CliEnvelope(
+        command=command,
+        exit_code=code,
+        ok=code is ExitCode.OK,
+        message=submit_report(result, resubmit=resubmit),
+        data=data,
+    )
 
 
 @app.command("run")
@@ -409,7 +486,18 @@ def run_(
     as_json: JsonOpt = False,
 ) -> None:
     """Plan, submit and wait (local backend only)."""
-    _stub("run", as_json)
+    loaded = _settings("run", profile, as_json)
+    config = RunConfig(
+        dataset_id=dataset,
+        priors_path=priors,
+        engine=loaded.settings.engine.name,
+        profile=requested_profile(profile),
+    )
+    planned, result = _driver("run", lambda: run_local(config, loaded), as_json)
+    if result is None or planned.plan is None:
+        _finish(_invalid("run", "cannot plan this run", planned.errors, planned.warnings), as_json)
+    extra = {"run_dir": str(planned.run_dir), "n_tasks": len(planned.plan.tasks)}
+    _finish(_submit_envelope("run", result, False, extra), as_json)
 
 
 @app.command("run-task")
@@ -472,7 +560,25 @@ def status(
     as_json: JsonOpt = False,
 ) -> None:
     """Show task states from _DONE markers and sacct."""
-    _stub("status", as_json)
+    loaded = _settings("status", profile, as_json)
+    view = _driver("status", lambda: (watch_run if watch else refresh_run)(run, loaded), as_json)
+    _finish(_status_envelope(view, failures), as_json)
+
+
+def _status_envelope(view: RunView, failures: bool) -> CliEnvelope:
+    data = {
+        "run": view.run.as_json(),
+        "entered": [s.value for s in view.entered],
+        "tasks": [t.as_json() for t in view.tasks],
+        "failures": [t.as_json() for t in view.failures],
+    }
+    return CliEnvelope(
+        command="status",
+        exit_code=ExitCode.OK,
+        ok=True,
+        message=status_report(view, failures=failures),
+        data=data,
+    )
 
 
 @app.command()
@@ -483,7 +589,23 @@ def cancel(
     as_json: JsonOpt = False,
 ) -> None:
     """Cancel a run."""
-    _stub("cancel", as_json)
+    if not confirm:
+        refused = ("cancelling stops the run for good; add --confirm to cancel it",)
+        _finish(_invalid("cancel", "not cancelled", refused, ()), as_json)
+    loaded = _settings("cancel", profile, as_json)
+    result = _driver("cancel", lambda: cancel_run(run, loaded), as_json)
+    if result.status is CancelStatus.NOTHING_TO_DO:
+        code, message = ExitCode.NOTHING_TO_DO, f"run {run} is already {result.run.status.value}"
+    else:
+        code, message = ExitCode.OK, f"run {run} cancelled"
+    envelope = CliEnvelope(
+        command="cancel",
+        exit_code=code,
+        ok=code is ExitCode.OK,
+        message=message,
+        data={"run": result.run.as_json()},
+    )
+    _finish(envelope, as_json)
 
 
 @app.command()

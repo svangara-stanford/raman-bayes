@@ -46,6 +46,13 @@ def _lock_held_elsewhere(run_dir: Path, minutes_old: float) -> None:
     os.utime(lock, (stamp, stamp))
 
 
+def _assert_stopped_after_locking(run_dir: Path, cause: str) -> None:
+    # The lock is taken first and left behind, so the task reads as stopped; nothing else is
+    # written to its folder, and the task log says why.
+    assert sorted(p.name for p in shards.task_dir(run_dir, 0).iterdir()) == [task_lock.LOCK_FILE]
+    assert cause in (run_dir / "logs" / "task-0.log").read_text(encoding="utf-8")
+
+
 def _snapshot(root: Path) -> dict[str, tuple[int, bytes]]:
     return {
         str(p.relative_to(root)): (p.stat().st_mtime_ns, p.read_bytes())
@@ -129,7 +136,7 @@ def test_missing_store_exits_4(mini_store: Path, write_plan: WritePlan) -> None:
     code, env = _invoke(run_dir)
     assert code == ExitCode.BACKEND
     assert str(mini_store) in env.errors[0]
-    assert not shards.task_dir(run_dir, 0).exists()
+    _assert_stopped_after_locking(run_dir, str(mini_store))
 
 
 def test_store_that_changed_since_planning_exits_4(
@@ -155,7 +162,7 @@ def test_engine_version_mismatch_exits_4(
     assert code == ExitCode.BACKEND
     assert f"planned with engine {engine} {version}" in env.errors[0]
     assert says in env.errors[0]
-    assert not shards.task_dir(run_dir, 0).exists()
+    _assert_stopped_after_locking(run_dir, says)
 
 
 def test_unknown_run_exits_2(raman_paths: PathsSettings) -> None:

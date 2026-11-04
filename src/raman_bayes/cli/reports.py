@@ -9,11 +9,20 @@ from pathlib import Path
 
 from raman_bayes.app.ingest import IngestPreview, ScanOutcome, ScanStatus
 from raman_bayes.app.run_task import RunTaskStatus, TaskOutcome
+from raman_bayes.app.status import RunView
+from raman_bayes.app.submit import SubmitResult, SubmitStatus
 from raman_bayes.domain.dataset import AxisSpec
 from raman_bayes.domain.qc import QCCounts
-from raman_bayes.domain.run import RunPlan
+from raman_bayes.domain.run import RunPlan, RunStatus, TaskState, TaskStatus
 
-__all__ = ["ingest_report", "plan_report", "qc_summary", "task_report"]
+__all__ = [
+    "ingest_report",
+    "plan_report",
+    "qc_summary",
+    "status_report",
+    "submit_report",
+    "task_report",
+]
 
 _TASKS_SHOWN = 20  # a Slurm plan may have hundreds; the JSON envelope lists them all
 
@@ -112,3 +121,52 @@ def task_report(run: str, outcome: TaskOutcome) -> str:
         f"{head}: done, {fits}; {outcome.n_parts_written} sub-batch(es) written, "
         f"{outcome.n_parts_kept} kept"
     )
+
+
+def submit_report(result: SubmitResult, *, resubmit: bool) -> str:
+    """Describe a submit: the preview, why there was nothing to do, or how the run ended."""
+    run = result.run
+    head = f"run {run.run_id}"
+    if result.status is SubmitStatus.NOTHING_TO_DO:
+        if run.status in (RunStatus.COMPLETE, RunStatus.COLLECTED):
+            return f"{head} is {run.status.value}; nothing to submit"
+        if resubmit:
+            return f"{head} is {run.status.value} and has no stopped tasks to resubmit"
+        return (
+            f"{head} is already submitted ({run.status.value}); see raman status, or retry "
+            "stopped tasks with --resubmit-failed"
+        )
+    record = result.record
+    assert record is not None
+    tasks = ", ".join(str(i) for i in record.task_indices)
+    if result.status is SubmitStatus.DRY_RUN:
+        return f"{head}: dry run, would submit attempt {record.attempt} of tasks {tasks}"
+    lines = [
+        f"{head}: attempt {record.attempt} of tasks {tasks} finished; run is {run.status.value}"
+    ]
+    lines += [f"  task {i} stopped: {e}" for i, e in sorted(result.failures.items())]
+    return "\n".join(lines)
+
+
+def status_report(view: RunView, *, failures: bool) -> str:
+    """Describe a run and its first 20 tasks; with ``failures``, why each stopped task stopped."""
+    run = view.run
+    moved = f" (now {', '.join(s.value for s in view.entered)})" if view.entered else ""
+    lines = [f"run {run.run_id}: {run.status.value}{moved}; dataset {run.dataset_id}"]
+    lines += [f"  task {t.task_index}: {_task_line(t.state)}" for t in view.tasks[:_TASKS_SHOWN]]
+    if len(view.tasks) > _TASKS_SHOWN:
+        lines.append(f"  ... and {len(view.tasks) - _TASKS_SHOWN} more tasks")
+    if failures:
+        lines.append(f"failures: {len(view.failures)}")
+        lines += [
+            f"  task {t.task_index}: {t.state.status.value}: {t.state.error or 'no error recorded'}"
+            for t in view.failures
+        ]
+    return "\n".join(lines)
+
+
+def _task_line(state: TaskState) -> str:
+    attempts = f"{state.attempts} attempt{'' if state.attempts == 1 else 's'}"
+    if state.status is TaskStatus.DONE:
+        return f"done, {state.n_ok} ok, {state.n_failed} failed ({attempts})"
+    return f"{state.status.value} ({attempts})"

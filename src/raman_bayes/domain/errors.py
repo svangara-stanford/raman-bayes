@@ -15,6 +15,7 @@ from raman_bayes.domain.markers import LockHolder
 
 __all__ = [
     "AxisMismatchError",
+    "BackendNotSupportedError",
     "CatalogError",
     "ConfigError",
     "CountTooLargeError",
@@ -38,10 +39,13 @@ __all__ = [
     "InvalidProfileError",
     "InvalidRunPlanError",
     "InvalidScanInfoError",
+    "InvalidSubmissionsError",
     "LegacyCsvError",
     "LegacyCsvHeaderError",
     "LegacyCsvRowError",
+    "LocalBackendOnlyError",
     "MalformedVariableError",
+    "MaxAttemptsError",
     "MissingInfoKeyError",
     "MissingInfoSectionError",
     "MissingSpectraError",
@@ -49,6 +53,7 @@ __all__ = [
     "NoScanFolderError",
     "OutOfGridSpectrumError",
     "RamanBayesError",
+    "RunNotInCatalogError",
     "RunPlanNotFoundError",
     "ScanFolderError",
     "SpectrumFileError",
@@ -56,6 +61,7 @@ __all__ = [
     "SpectrumRowCountError",
     "SpectrumScanMismatchError",
     "StaleStatusError",
+    "SubmitRefusedError",
     "TaskIndexError",
     "TaskLockedError",
     "TaskSizeRequiredError",
@@ -425,6 +431,62 @@ class InvalidDoneMarkerError(RamanBayesError):
 
     def __init__(self, path: Path, problem: str) -> None:
         super().__init__(f"{path}: unreadable done marker: {problem}")
+
+
+# ---------------------------------------------------------------- submit, status, cancel
+
+
+class RunNotInCatalogError(InputError):
+    """A command names a run the catalog does not have."""
+
+    def __init__(self, run_id: str, catalog: Path) -> None:
+        super().__init__(f"no run {run_id!r} in {catalog}")
+
+
+class BackendNotSupportedError(InputError):
+    """The run or profile needs a backend this command cannot use yet."""
+
+    def __init__(self, run_id: str, planned: str, profile: str, backend: str) -> None:
+        if planned != backend:
+            problem = f"was planned for {planned}, but profile {profile!r} uses {backend}"
+        else:
+            problem = f"uses {backend}, which is not supported yet; use a local profile"
+        super().__init__(f"run {run_id} {problem}")
+
+
+class LocalBackendOnlyError(InputError):
+    """A command that waits for its run was used with a profile that is not local."""
+
+    def __init__(self, command: str, profile: str, backend: str) -> None:
+        super().__init__(
+            f"raman {command} uses the local backend only, but profile {profile!r} uses "
+            f"{backend}; plan and submit the run instead"
+        )
+
+
+class SubmitRefusedError(InputError):
+    """The run's status does not allow this submission."""
+
+    def __init__(self, run_id: str, status: str, advice: str) -> None:
+        super().__init__(f"run {run_id} is {status}; {advice}")
+
+
+class MaxAttemptsError(InputError):
+    """Tasks that would be resubmitted have used every attempt."""
+
+    def __init__(self, run_id: str, tasks: Sequence[int], max_attempts: int) -> None:
+        names = ", ".join(str(t) for t in tasks)
+        super().__init__(
+            f"run {run_id}: task {names} has used its {max_attempts} attempts; "
+            "check logs/task-N.log in the run folder before planning the run again"
+        )
+
+
+class InvalidSubmissionsError(RamanBayesError):
+    """``submission.json`` exists but cannot be read."""
+
+    def __init__(self, path: Path, problem: str) -> None:
+        super().__init__(f"{path}: not a valid submission list: {problem}")
 
 
 # ---------------------------------------------------------------- legacy priors CSV

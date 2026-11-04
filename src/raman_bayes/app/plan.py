@@ -8,22 +8,16 @@ with a warning; production runs will require approved recipes.
 """
 
 import dataclasses
-import os
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pydantic import JsonValue, ValidationError
+from pydantic import JsonValue
 
 from raman_bayes.app.validate import validate_priors_file
 from raman_bayes.config.settings import LoadedSettings, Settings
-from raman_bayes.domain.errors import (
-    InputError,
-    InvalidRunPlanError,
-    RunPlanNotFoundError,
-    TaskSizeRequiredError,
-)
+from raman_bayes.domain.errors import InputError, TaskSizeRequiredError
 from raman_bayes.domain.priors import PriorsSpec
 from raman_bayes.domain.priors_rules import check_axis, priors_hash
 from raman_bayes.domain.run import SEED_BITS, RunConfig, RunPlan, config_hash
@@ -32,11 +26,10 @@ from raman_bayes.engine.registry import load_engine
 from raman_bayes.orchestration.chunking import Chunking, plan_tasks
 from raman_bayes.ports.engine import EngineConfig, PeakEngine
 from raman_bayes.storage.catalog import Catalog, RunRecord
+from raman_bayes.storage.run_files import RUN_PLAN_FILE, write_plan
 from raman_bayes.storage.zarr_dataset import StoredDataset, open_dataset
 
-__all__ = ["RUN_PLAN_FILE", "PlanResult", "plan_run", "read_plan"]
-
-RUN_PLAN_FILE = "run_plan.json"
+__all__ = ["RUN_PLAN_FILE", "PlanResult", "plan_run"]
 
 
 @dataclass(frozen=True)
@@ -80,7 +73,8 @@ def plan_run(
             f"{config.priors_path}: recipe status is draft; production runs need approved"
         )
     plan = _plan(config, loaded, checked, now or datetime.now(UTC))
-    run_dir = _write(plan, loaded.settings.paths.runs_root)
+    run_dir = loaded.settings.paths.runs_root / plan.run_id
+    write_plan(run_dir, plan)
     _register(Catalog(loaded.settings.paths.catalog), plan, checked.yaml_text)
     return PlanResult(errors=(), warnings=tuple(warnings), plan=plan, run_dir=run_dir)
 
@@ -142,15 +136,6 @@ def _plan(config: RunConfig, loaded: LoadedSettings, checked: _Checked, now: dat
     )
 
 
-def _write(plan: RunPlan, runs_root: Path) -> Path:
-    run_dir = runs_root / plan.run_id
-    run_dir.mkdir(parents=True)
-    staged = run_dir / f".{RUN_PLAN_FILE}.tmp"
-    staged.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
-    os.replace(staged, run_dir / RUN_PLAN_FILE)
-    return run_dir
-
-
 def _register(catalog: Catalog, plan: RunPlan, yaml_text: str) -> None:
     catalog.add_priors_spec(plan.priors, plan.priors_hash, yaml_text, plan.created_at)
     record = RunRecord(
@@ -167,23 +152,3 @@ def _register(catalog: Catalog, plan: RunPlan, yaml_text: str) -> None:
         created_at=plan.created_at,
     )
     catalog.create_run(record, plan.tasks)
-
-
-def read_plan(run_dir: Path) -> RunPlan:
-    """Return the plan in ``run_dir/run_plan.json``, checked as on construction.
-
-    Raises RunPlanNotFoundError when there is no plan file, and InvalidRunPlanError when it is
-    not a valid plan or belongs to another run.
-    """
-    path = run_dir / RUN_PLAN_FILE
-    try:
-        text = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        raise RunPlanNotFoundError(path) from None
-    try:
-        plan = RunPlan.model_validate_json(text)
-    except ValidationError as exc:
-        raise InvalidRunPlanError(path, str(exc)) from exc
-    if plan.run_id != run_dir.name:
-        raise InvalidRunPlanError(path, f"it is the plan of run {plan.run_id}")
-    return plan

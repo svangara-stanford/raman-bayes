@@ -24,7 +24,6 @@ from typing import TypeVar
 import numpy as np
 from pydantic import TypeAdapter
 
-from raman_bayes.app.plan import read_plan
 from raman_bayes.app.provenance import code_provenance, slurm_ids
 from raman_bayes.config.settings import DEFAULT_LOCK_STALE_MINUTES
 from raman_bayes.domain.dataset import QCFlag
@@ -33,6 +32,7 @@ from raman_bayes.domain.errors import (
     EngineContractError,
     EngineMismatchError,
     InvalidEngineError,
+    RamanBayesError,
     TaskIndexError,
     TaskLockedError,
     UnknownEngineError,
@@ -47,6 +47,7 @@ from raman_bayes.logging import task_log
 from raman_bayes.ports.engine import EngineConfig, PeakEngine, PreparedSpectrum
 from raman_bayes.preprocessing.prepare import RawSpectrum, prepare
 from raman_bayes.storage.result_tables import FitRecord, SpectrumPlace, fits_table, peaks_table
+from raman_bayes.storage.run_files import read_plan
 from raman_bayes.storage.shards import (
     PartRows,
     part_is_valid,
@@ -66,6 +67,7 @@ __all__ = [
     "TaskOutcome",
     "TaskRequest",
     "run_task",
+    "run_task_in_worker",
 ]
 
 SUB_BATCH_SPECTRA = 512
@@ -148,11 +150,12 @@ def run_task(request: TaskRequest) -> TaskOutcome:
     """Fit every spectrum of the task and write its parts and ``_DONE.json``.
 
     Writes nothing when the task is already done or a fresh lock holds it. Raises
-    RunPlanNotFoundError or TaskIndexError for a run or task that does not exist,
-    InvalidRunPlanError, EngineMismatchError when the plan's engine version is not installed,
-    DatasetStoreError when the store is missing or changed since planning, and
-    EngineContractError when the engine returns results that do not match its input. A task
-    that raises after taking its lock leaves the lock behind.
+    RunPlanNotFoundError or TaskIndexError for a run or task that does not exist, and
+    InvalidRunPlanError, before taking the lock. Once it holds the lock it raises
+    EngineMismatchError when the plan's engine version is not installed, DatasetStoreError
+    when the store is missing or changed since planning, and EngineContractError when the
+    engine returns results that do not match its input; the lock is then left behind, so the
+    task reads as stopped, and the task log says why.
     """
     plan = read_plan(request.run_dir)
     task = _task(plan, request.task_index)
@@ -160,8 +163,6 @@ def run_task(request: TaskRequest) -> TaskOutcome:
     done = read_done(folder)
     if done is not None:
         return TaskOutcome(RunTaskStatus.ALREADY_DONE, task, marker=done)
-    _check_engine(plan)
-    _check_store(plan)
     try:
         holder = acquire_lock(folder, request.lock_stale)
     except TaskLockedError as exc:
@@ -172,7 +173,11 @@ def run_task(request: TaskRequest) -> TaskOutcome:
         if done is not None:
             release_lock(folder)
             return TaskOutcome(RunTaskStatus.ALREADY_DONE, task, marker=done)
-        written, kept = _fit_task(plan, task, folder, request.workers)
+        try:
+            written, kept = _run_locked(plan, task, folder, request.workers)
+        except (RamanBayesError, OSError) as exc:
+            _log.exception("task %d stopped: %s", task.task_index, exc)
+            raise
         marker = _done_marker(plan, task, folder, holder)
         write_done(folder, marker)
         _log.info(
@@ -182,6 +187,21 @@ def run_task(request: TaskRequest) -> TaskOutcome:
     return TaskOutcome(
         RunTaskStatus.DONE, task, marker=marker, n_parts_written=written, n_parts_kept=kept
     )
+
+
+def run_task_in_worker(run_dir: Path, task_index: int, *, lock_stale: timedelta) -> TaskOutcome:
+    """Run task ``task_index`` of the run in ``run_dir`` with one worker.
+
+    This is what a local backend's pool runs; bind ``lock_stale`` with ``functools.partial``
+    to make it a picklable ``(run_dir, task_index)`` runner. Raises as ``run_task``.
+    """
+    return run_task(TaskRequest(run_dir, task_index, workers=1, lock_stale=lock_stale))
+
+
+def _run_locked(plan: RunPlan, task: TaskSpec, folder: Path, workers: int) -> tuple[int, int]:
+    _check_engine(plan)
+    _check_store(plan)
+    return _fit_task(plan, task, folder, workers)
 
 
 def _task(plan: RunPlan, index: int) -> TaskSpec:

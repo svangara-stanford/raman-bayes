@@ -51,7 +51,11 @@ NAMES = list(COMMANDS)
 IMPLEMENTED = {
     "ingest",
     "plan",
+    "submit",
+    "run",
     "run-task",
+    "status",
+    "cancel",
     "validate-priors",
     "priors import-csv",
     "priors export-csv",
