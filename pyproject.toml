@@ -29,7 +29,6 @@ dependencies = [
     "typer>=0.12",
     "rich>=13",
     "pyyaml>=6",
-    "duckdb>=1.0",
 ]
 
 [project.scripts]
@@ -193,6 +192,24 @@ source_modules = ["raman_bayes.app"]
 forbidden_modules = ["rich", "typer"]
 
 # ---------------------------------------------------------------- pytest
+[tool.coverage.run]
+source = ["raman_bayes"]
+branch = true
+
+[tool.coverage.report]
+# Lowering this or adding "pragma: no cover" is a weakening (CLAUDE.md hard stops).
+fail_under = 95
+show_missing = true
+skip_covered = true
+
+[tool.deptry]
+known_first_party = ["raman_bayes"]
+
+[tool.deptry.per_rule_ignores]
+# Pydantic documents these imports from pydantic_core and pins its exact version, so
+# declaring pydantic-core as well would duplicate that pin.
+DEP003 = ["pydantic_core"]
+
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
