@@ -14,6 +14,7 @@ from typing import Annotated, Any, NoReturn, TypeVar
 import typer
 
 from raman_bayes.app import catalog_views, priors_csv, validate
+from raman_bayes.app.collect import CollectRequest, CollectStatus, collect_run
 from raman_bayes.app.ingest import IngestRequest, ScanOutcome, ScanStatus
 from raman_bayes.app.ingest import ingest as ingest_scans
 from raman_bayes.app.plan import RUN_PLAN_FILE, plan_run
@@ -31,6 +32,7 @@ from raman_bayes.app.submit import (
 )
 from raman_bayes.cli.output import CliEnvelope, ExitCode, emit
 from raman_bayes.cli.reports import (
+    collect_report,
     ingest_report,
     plan_report,
     qc_summary,
@@ -617,7 +619,30 @@ def collect(
     as_json: JsonOpt = False,
 ) -> None:
     """Merge shards into results/*.parquet."""
-    _stub("collect", as_json)
+    loaded = _settings("collect", profile, as_json)
+    refused = _slurm_only({"--as-job": as_job}, loaded)
+    if refused:
+        _finish(_invalid("collect", "cannot collect with these options", refused, ()), as_json)
+    request = CollectRequest(run, partial=partial)
+    result = _driver("collect", lambda: collect_run(request, loaded), as_json)
+    code = ExitCode.NOTHING_TO_DO if result.status is CollectStatus.NOTHING_TO_DO else ExitCode.OK
+    data = {
+        "run_id": result.run.run_id,
+        "status": result.status.value,
+        "run_status": result.run.status.value,
+        "results_dir": str(result.results_dir) if result.results_dir else None,
+        "files": [str(f) for f in result.files],
+        "archive_dir": str(result.archive_dir) if result.archive_dir else None,
+        "manifest": result.manifest.model_dump(mode="json") if result.manifest else None,
+    }
+    envelope = CliEnvelope(
+        command="collect",
+        exit_code=code,
+        ok=code is ExitCode.OK,
+        message=collect_report(result),
+        data=data,
+    )
+    _finish(envelope, as_json)
 
 
 @app.command()

@@ -11,7 +11,7 @@ import os
 import shutil
 import subprocess
 import zipfile
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -23,12 +23,16 @@ import yaml
 from raman_bayes.app.ingest import IngestRequest, ingest
 from raman_bayes.config.settings import PathsSettings
 from raman_bayes.domain.dataset import DatasetManifest
+from raman_bayes.domain.markers import DoneMarker
 from raman_bayes.domain.priors import PriorsSpec
 from raman_bayes.domain.priors_rules import priors_hash
+from raman_bayes.domain.results import PeakPosterior, PosteriorSummary, WindowFitResult
 from raman_bayes.domain.run import RunPlan, task_ranges
 from raman_bayes.domain.uuid7 import uuid7
 from raman_bayes.io.nanofinder import parse_info
 from raman_bayes.ports.engine import EngineConfig
+from raman_bayes.storage import shards
+from raman_bayes.storage.result_tables import FitRecord, SpectrumPlace, fits_table, peaks_table
 from raman_bayes.storage.zarr_dataset import (
     DatasetArrays,
     content_hash,
@@ -247,5 +251,85 @@ def write_plan(raman_paths: PathsSettings) -> Callable[..., Path]:
         run_dir.mkdir(parents=True)
         (run_dir / "run_plan.json").write_text(plan.model_dump_json(indent=2), encoding="utf-8")
         return run_dir
+
+    return write
+
+
+@pytest.fixture
+def finished_task() -> Callable[..., DoneMarker]:
+    """Write a finished task folder by hand: one part pair and a matching ``_DONE.json``.
+
+    Every spectrum in ``ids`` gets one fit per window of the §5 recipe, with ``status`` and
+    ``diagnostics``; present peaks have posteriors. Other keywords override done-marker fields.
+    """
+
+    def write(
+        run_dir: Path,
+        task_index: int,
+        ids: Sequence[int],
+        *,
+        status: str = "ok",
+        diagnostics: Mapping[str, float] | None = None,
+        **marker: Any,
+    ) -> DoneMarker:
+        recipe = design_priors()
+        summary = PosteriorSummary(1.0, 1.0, 0.05, 0.9, 1.1)
+        results = [
+            WindowFitResult(
+                spectrum_id=sid,
+                window_id=w.id,
+                status=status,  # type: ignore[arg-type]
+                peaks=tuple(
+                    PeakPosterior(p.id, 0.9, summary, summary, summary, summary, summary)
+                    for p in w.peaks
+                )
+                if status == "ok"
+                else (),
+                diagnostics=dict(diagnostics or {}),
+                runtime_s=0.001,
+                engine="mock",
+                engine_version="0.1.0",
+            )
+            for sid in ids
+            for w in recipe.windows
+        ]
+        places = {sid: SpectrumPlace(sid, 0, 0, float(sid), 0.0, 42.0) for sid in ids}
+        folder = shards.task_dir(run_dir, task_index)
+        folder.mkdir(parents=True, exist_ok=True)
+        shards.write_part(
+            folder,
+            0,
+            fits_table(run_dir.name, [FitRecord(r, 1.0) for r in results]),
+            peaks_table(run_dir.name, "ds", recipe, results, places),
+        )
+        parts = shards.summarize_parts(folder)
+        fields: dict[str, Any] = {
+            "run_id": run_dir.name,
+            "task_index": task_index,
+            "spec_start": min(ids),
+            "spec_stop": max(ids) + 1,
+            "parts": parts.parts,
+            "n_fits": parts.n_fits,
+            "n_ok": parts.n_ok,
+            "n_failed": parts.n_failed,
+            "n_skipped_qc": parts.n_skipped_qc,
+            "n_peaks": parts.n_peaks,
+            "shard_hash": parts.shard_hash,
+            "host": "node-a",
+            "pid": 100 + task_index,
+            "slurm_job_id": None,
+            "slurm_array_job_id": None,
+            "started_at": PLANNED_AT,
+            "completed_at": PLANNED_AT,
+            "package_version": "0.1.0",
+            "git_sha": "abc1234",
+            "git_dirty": False,
+            "pixi_lock_hash": "f" * 64,
+            "engine": "mock",
+            "engine_version": "0.1.0",
+        }
+        done = DoneMarker.model_validate(fields | marker)
+        shards.write_done(folder, done)
+        return done
 
     return write

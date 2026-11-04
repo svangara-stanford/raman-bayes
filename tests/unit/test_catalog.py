@@ -369,3 +369,16 @@ def test_catalog_created_with_parent_dirs_on_first_write(tmp_path: Path) -> None
     assert not path.parent.exists()
     cat.add_dataset(_manifest(), tmp_path / "d.zarr")
     assert path.is_file()
+
+
+def test_mark_collected_records_result_uri_and_needs_complete(
+    catalog: Catalog, run_id: str
+) -> None:
+    _walk(catalog, run_id, S.RUNNING)
+    with pytest.raises(StaleStatusError, match="expected status complete, but it is running"):
+        catalog.mark_collected(run_id, "/runs/r/results")
+    catalog.transition(run_id, S.RUNNING, S.COMPLETE)
+    catalog.mark_collected(run_id, "/archive/r/results")
+    run = catalog.get_run(run_id)
+    assert run is not None
+    assert (run.status, run.result_uri) == (S.COLLECTED, "/archive/r/results")

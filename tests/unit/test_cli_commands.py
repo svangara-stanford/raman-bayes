@@ -56,6 +56,7 @@ IMPLEMENTED = {
     "run-task",
     "status",
     "cancel",
+    "collect",
     "validate-priors",
     "priors import-csv",
     "priors export-csv",

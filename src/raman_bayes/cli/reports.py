@@ -7,6 +7,7 @@ what a person reads.
 from collections.abc import Sequence
 from pathlib import Path
 
+from raman_bayes.app.collect import CollectResult, CollectStatus
 from raman_bayes.app.ingest import IngestPreview, ScanOutcome, ScanStatus
 from raman_bayes.app.run_task import RunTaskStatus, TaskOutcome
 from raman_bayes.app.status import RunView
@@ -16,6 +17,7 @@ from raman_bayes.domain.qc import QCCounts
 from raman_bayes.domain.run import RunPlan, RunStatus, TaskState, TaskStatus
 
 __all__ = [
+    "collect_report",
     "ingest_report",
     "plan_report",
     "qc_summary",
@@ -170,3 +172,26 @@ def _task_line(state: TaskState) -> str:
     if state.status is TaskStatus.DONE:
         return f"done, {state.n_ok} ok, {state.n_failed} failed ({attempts})"
     return f"{state.status.value} ({attempts})"
+
+
+def collect_report(result: CollectResult) -> str:
+    """Describe a collect: where the results went, and whether they cover the whole run."""
+    run = result.run
+    manifest = result.manifest
+    if result.status is CollectStatus.NOTHING_TO_DO or manifest is None:
+        return f"run {run.run_id} is already {run.status.value}; nothing to do"
+    scope = (
+        f"{len(manifest.shard_hashes)} of {manifest.n_tasks} tasks (partial; run is still "
+        f"{run.status.value})"
+        if manifest.partial
+        else f"all {manifest.n_tasks} tasks; run is {run.status.value}"
+    )
+    lines = [
+        f"run {run.run_id}: collected {scope}",
+        f"  {manifest.n_spectra} spectra, {manifest.n_failed} failed fits, "
+        f"{manifest.n_skipped_qc} skipped_qc",
+        f"  results in {result.results_dir}",
+    ]
+    if result.archive_dir is not None:
+        lines.append(f"  copied to {result.archive_dir}")
+    return "\n".join(lines)

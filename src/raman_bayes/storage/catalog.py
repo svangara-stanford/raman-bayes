@@ -312,6 +312,18 @@ class Catalog:
                 raise StaleStatusError(run_id, expected.value, current.value)
             _set_status(conn, run_id, new, now or datetime.now(UTC))
 
+    def mark_collected(self, run_id: str, result_uri: str, *, now: datetime | None = None) -> None:
+        """Move a complete run to collected and record where its results are, atomically.
+
+        Raises UnknownRunError, or StaleStatusError when the run is not complete.
+        """
+        with self._write() as conn:
+            current = _status(conn, run_id)
+            if current is not RunStatus.COMPLETE:
+                raise StaleStatusError(run_id, RunStatus.COMPLETE.value, current.value)
+            _set_status(conn, run_id, RunStatus.COLLECTED, now or datetime.now(UTC))
+            conn.execute("UPDATE run SET result_uri = ? WHERE run_id = ?", (result_uri, run_id))
+
     def update_task(self, run_id: str, task_index: int, state: TaskState) -> None:
         """Store ``state`` as the task's last known state; raises UnknownTaskError if absent."""
         with self._write() as conn:

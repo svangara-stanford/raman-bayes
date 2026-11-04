@@ -5,7 +5,7 @@ message names the file and what is wrong with it; InputError and its subclasses 
 """
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -17,9 +17,11 @@ __all__ = [
     "AxisMismatchError",
     "BackendNotSupportedError",
     "CatalogError",
+    "CollectRefusedError",
     "ConfigError",
     "CountTooLargeError",
     "DatasetStoreError",
+    "DuplicateRowsError",
     "DuplicateSpectrumError",
     "EngineContractError",
     "EngineMismatchError",
@@ -49,13 +51,17 @@ __all__ = [
     "MissingInfoKeyError",
     "MissingInfoSectionError",
     "MissingSpectraError",
+    "MixedCodeError",
     "NegativeDurationError",
     "NoScanFolderError",
+    "NothingToCollectError",
     "OutOfGridSpectrumError",
+    "PartSchemaError",
     "RamanBayesError",
     "RunNotInCatalogError",
     "RunPlanNotFoundError",
     "ScanFolderError",
+    "ShardMismatchError",
     "SpectrumFileError",
     "SpectrumLineError",
     "SpectrumRowCountError",
@@ -487,6 +493,55 @@ class InvalidSubmissionsError(RamanBayesError):
 
     def __init__(self, path: Path, problem: str) -> None:
         super().__init__(f"{path}: not a valid submission list: {problem}")
+
+
+# ---------------------------------------------------------------- collect
+
+
+class CollectRefusedError(InputError):
+    """The run is not complete and ``--partial`` was not given."""
+
+    def __init__(self, run_id: str, status: str) -> None:
+        super().__init__(
+            f"run {run_id} is {status}; wait for it to complete, or collect the tasks that "
+            "have finished with --partial"
+        )
+
+
+class NothingToCollectError(InputError):
+    """A partial collect of a run none of whose tasks has finished."""
+
+    def __init__(self, run_id: str) -> None:
+        super().__init__(f"run {run_id}: no task has finished yet, so there is nothing to collect")
+
+
+class ShardMismatchError(RamanBayesError):
+    """A task folder's parts are not the ones its ``_DONE.json`` recorded."""
+
+    def __init__(self, folder: Path, problem: str) -> None:
+        super().__init__(f"{folder}: {problem}; run the task again to rewrite its parts")
+
+
+class PartSchemaError(RamanBayesError):
+    """A part does not have the explicit schema it must be written with."""
+
+    def __init__(self, path: Path, kind: str) -> None:
+        super().__init__(f"{path}: not written with the {kind} schema")
+
+
+class DuplicateRowsError(RamanBayesError):
+    """The same fit or peak appears in more than one part."""
+
+    def __init__(self, kind: str, key: Mapping[str, object]) -> None:
+        where = ", ".join(f"{name.removesuffix('_id')} {value}" for name, value in key.items())
+        super().__init__(f"the {kind} for {where} appears more than once across the run's parts")
+
+
+class MixedCodeError(RamanBayesError):
+    """The tasks of one run ran different code, so their results are not one analysis."""
+
+    def __init__(self, run_id: str, differences: Sequence[str]) -> None:
+        super().__init__(f"run {run_id}: tasks ran different code: {'; '.join(differences)}")
 
 
 # ---------------------------------------------------------------- legacy priors CSV
