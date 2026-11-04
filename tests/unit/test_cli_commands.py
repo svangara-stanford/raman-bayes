@@ -1,6 +1,5 @@
-"""The §10 command surface: all 18 commands registered; those not built yet are stubs (exit 3)."""
+"""The §10 command surface: all 18 commands registered, with the shared options."""
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -9,7 +8,7 @@ import typer
 from typer.testing import CliRunner
 
 from raman_bayes.cli.main import app
-from raman_bayes.cli.output import CliEnvelope, ExitCode
+from raman_bayes.cli.output import CliEnvelope
 
 ROOT = Path(__file__).resolve().parents[2]
 ESC = "\x1b"
@@ -47,26 +46,8 @@ COMMANDS: dict[str, list[str]] = {
     "doctor": ["doctor"],
 }
 NAMES = list(COMMANDS)
-# Commands built so far; each one has its own test module.
-IMPLEMENTED = {
-    "ingest",
-    "plan",
-    "validate-priors",
-    "priors import-csv",
-    "priors export-csv",
-    "datasets list",
-    "datasets show",
-    "runs list",
-    "runs show",
-}
-STUBS = [name for name in NAMES if name not in IMPLEMENTED]
 
 runner = CliRunner()
-
-
-def _schema_properties() -> set[str]:
-    schema = json.loads((ROOT / "schemas/cli/envelope.schema.json").read_text(encoding="utf-8"))
-    return set(schema["properties"])
 
 
 def _assert_no_repo_refs(text: str) -> None:
@@ -107,32 +88,6 @@ def test_root_help_lists_top_level_commands() -> None:
 # ---------------------------------------------------------------- every command
 
 
-@pytest.mark.parametrize("name", STUBS)
-def test_stub_exits_nothing_to_do(name: str) -> None:
-    result = runner.invoke(app, COMMANDS[name])
-    assert result.exit_code == ExitCode.NOTHING_TO_DO, result.output
-    assert f"raman {name}: not implemented yet" in result.stdout
-    assert result.stderr == ""
-    assert ESC not in result.output
-    _assert_no_repo_refs(result.output)
-
-
-@pytest.mark.parametrize("name", STUBS)
-def test_stub_json_envelope(name: str) -> None:
-    result = runner.invoke(app, [*COMMANDS[name], "--json"])
-    assert result.exit_code == ExitCode.NOTHING_TO_DO, result.output
-    assert result.stderr == ""
-    lines = result.stdout.splitlines()
-    assert len(lines) == 1
-    env = CliEnvelope.model_validate_json(lines[0])
-    assert env.command == name
-    assert env.exit_code is ExitCode.NOTHING_TO_DO
-    assert env.ok is False
-    assert set(json.loads(lines[0])) == _schema_properties()
-    assert env.message is not None
-    _assert_no_repo_refs(env.message)
-
-
 @pytest.mark.parametrize("name", NAMES)
 def test_help_lists_shared_options(name: str) -> None:
     result = runner.invoke(app, [*name.split(), "--help"])
@@ -154,10 +109,17 @@ def test_profile_is_accepted(name: str) -> None:
 # ---------------------------------------------------------------- specific options
 
 
-@pytest.mark.parametrize(("workers", "code"), [("4", 3), ("abc", 2), ("0", 2)])
-def test_run_task_workers(workers: str, code: int) -> None:
-    result = runner.invoke(app, [*COMMANDS["run-task"], "--workers", workers])
-    assert result.exit_code == code, result.output
+@pytest.mark.parametrize(("workers", "usage_error"), [("4", False), ("abc", True), ("0", True)])
+def test_run_task_workers(workers: str, usage_error: bool) -> None:
+    if usage_error:
+        result = runner.invoke(app, [*COMMANDS["run-task"], "--workers", workers])
+        assert result.exit_code == 2
+        assert "--workers" in result.output
+        return
+    # Not a Click usage error: under --json a parsed command always writes one envelope.
+    result = runner.invoke(app, [*COMMANDS["run-task"], "--workers", workers, "--json"])
+    (line,) = result.stdout.splitlines()
+    assert CliEnvelope.model_validate_json(line).command == "run-task", result.output
 
 
 @pytest.mark.parametrize("missing", ["--run", "--task"])
@@ -200,7 +162,10 @@ def test_export_accepts_all_section_8_4_options() -> None:
         "--coords",
         "um",
     ]
-    assert runner.invoke(app, argv).exit_code == ExitCode.NOTHING_TO_DO
+    # Not a Click usage error: under --json a parsed command always writes one envelope.
+    result = runner.invoke(app, [*argv, "--json"])
+    (line,) = result.stdout.splitlines()
+    assert CliEnvelope.model_validate_json(line).command == "export", result.output
 
 
 def test_ingest_accepts_all_flags() -> None:

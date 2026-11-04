@@ -8,7 +8,6 @@ with a warning; production runs will require approved recipes.
 """
 
 import dataclasses
-import os
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -27,11 +26,10 @@ from raman_bayes.engine.registry import load_engine
 from raman_bayes.orchestration.chunking import Chunking, plan_tasks
 from raman_bayes.ports.engine import EngineConfig, PeakEngine
 from raman_bayes.storage.catalog import Catalog, RunRecord
+from raman_bayes.storage.run_files import RUN_PLAN_FILE, write_plan
 from raman_bayes.storage.zarr_dataset import StoredDataset, open_dataset
 
 __all__ = ["RUN_PLAN_FILE", "PlanResult", "plan_run"]
-
-RUN_PLAN_FILE = "run_plan.json"
 
 
 @dataclass(frozen=True)
@@ -75,7 +73,8 @@ def plan_run(
             f"{config.priors_path}: recipe status is draft; production runs need approved"
         )
     plan = _plan(config, loaded, checked, now or datetime.now(UTC))
-    run_dir = _write(plan, loaded.settings.paths.runs_root)
+    run_dir = loaded.settings.paths.runs_root / plan.run_id
+    write_plan(run_dir, plan)
     _register(Catalog(loaded.settings.paths.catalog), plan, checked.yaml_text)
     return PlanResult(errors=(), warnings=tuple(warnings), plan=plan, run_dir=run_dir)
 
@@ -135,15 +134,6 @@ def _plan(config: RunConfig, loaded: LoadedSettings, checked: _Checked, now: dat
         spectra_per_task=checked.chunking.spectra_per_task,
         tasks=checked.chunking.tasks,
     )
-
-
-def _write(plan: RunPlan, runs_root: Path) -> Path:
-    run_dir = runs_root / plan.run_id
-    run_dir.mkdir(parents=True)
-    staged = run_dir / f".{RUN_PLAN_FILE}.tmp"
-    staged.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
-    os.replace(staged, run_dir / RUN_PLAN_FILE)
-    return run_dir
 
 
 def _register(catalog: Catalog, plan: RunPlan, yaml_text: str) -> None:

@@ -1,22 +1,33 @@
-"""Errors a user can act on, raised by io/ and storage/ and reported by the CLI (DESIGN.md §10).
+"""Errors a user can act on, raised below the CLI and reported by it (DESIGN.md §10).
 
 They live in domain/ because cli/ may import only app/, domain/, config/ and logging. Every
 message names the file and what is wrong with it; InputError and its subclasses exit 2.
 """
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
 from pydantic import ValidationError
 
+from raman_bayes.domain.markers import LockHolder
+
 __all__ = [
     "AxisMismatchError",
+    "BackendNotSupportedError",
     "CatalogError",
+    "CollectRefusedError",
     "ConfigError",
     "CountTooLargeError",
+    "DatasetHashMismatchError",
+    "DatasetNotIngestedError",
     "DatasetStoreError",
+    "DuplicateRowsError",
     "DuplicateSpectrumError",
+    "EngineContractError",
+    "EngineMismatchError",
+    "ExportRefusedError",
     "FilenamePatternError",
     "FilenamePatternGroupsError",
     "FilenamePatternSyntaxError",
@@ -28,26 +39,43 @@ __all__ = [
     "InfoFilenameError",
     "InfoValueError",
     "InputError",
+    "InvalidDoneMarkerError",
     "InvalidEngineError",
     "InvalidProfileError",
+    "InvalidRunFolderError",
+    "InvalidRunPlanError",
     "InvalidScanInfoError",
+    "InvalidSubmissionsError",
     "LegacyCsvError",
     "LegacyCsvHeaderError",
     "LegacyCsvRowError",
+    "LocalBackendOnlyError",
     "MalformedVariableError",
+    "MaxAttemptsError",
     "MissingInfoKeyError",
     "MissingInfoSectionError",
     "MissingSpectraError",
+    "MixedCodeError",
     "NegativeDurationError",
     "NoScanFolderError",
+    "NothingToCollectError",
     "OutOfGridSpectrumError",
+    "PartSchemaError",
     "RamanBayesError",
+    "ResultsMissingError",
+    "RunFolderPlaceError",
+    "RunNotInCatalogError",
+    "RunPlanNotFoundError",
     "ScanFolderError",
+    "ShardMismatchError",
     "SpectrumFileError",
     "SpectrumLineError",
     "SpectrumRowCountError",
     "SpectrumScanMismatchError",
     "StaleStatusError",
+    "SubmitRefusedError",
+    "TaskIndexError",
+    "TaskLockedError",
     "TaskSizeRequiredError",
     "TimeSeriesNotSupportedError",
     "TooManyTasksError",
@@ -55,6 +83,7 @@ __all__ = [
     "UnknownProfileError",
     "UnknownRunError",
     "UnknownTaskError",
+    "UnknownWindowError",
     "UnsetVariableError",
     "UnsupportedCatalogError",
 ]
@@ -71,6 +100,19 @@ def _some(names: Sequence[str], total: int | None = None) -> str:
 
 class RamanBayesError(Exception):
     """Base of every error the CLI reports as a message rather than a traceback."""
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        """Pickle as the message and attributes, without calling the subclass constructor."""
+        # Subclasses build one message from several arguments, so the default, which calls
+        # cls(*args) with that message alone, cannot rebuild them. Spawn workers send errors
+        # back to their parent by pickling, so rebuild from the message and attributes instead.
+        return (_rebuild, (type(self), self.args), self.__dict__)
+
+
+def _rebuild(cls: type[RamanBayesError], args: tuple[Any, ...]) -> RamanBayesError:
+    error = cls.__new__(cls)
+    Exception.__init__(error, *args)
+    return error
 
 
 class InputError(RamanBayesError):
@@ -335,6 +377,238 @@ class TaskSizeRequiredError(InputError):
         super().__init__(
             f"the {backend} backend needs --spectra-per-task; "
             "choosing a task size from a benchmark is not supported yet"
+        )
+
+
+# ---------------------------------------------------------------- run-task
+
+
+class RunPlanNotFoundError(InputError):
+    """No ``run_plan.json`` where the run should be."""
+
+    def __init__(self, path: Path) -> None:
+        super().__init__(f"{path}: no run plan here; check the run id and the profile's runs_root")
+
+
+class InvalidRunPlanError(RamanBayesError):
+    """``run_plan.json`` exists but cannot be read as a run plan."""
+
+    def __init__(self, path: Path, problem: str) -> None:
+        super().__init__(f"{path}: not a valid run plan: {problem}")
+
+
+class TaskIndexError(InputError):
+    """The plan has no task with this index."""
+
+    def __init__(self, run_id: str, n_tasks: int, task_index: int) -> None:
+        super().__init__(
+            f"run {run_id} has {n_tasks} tasks (0 to {n_tasks - 1}); there is no task {task_index}"
+        )
+
+
+class EngineMismatchError(RamanBayesError):
+    """The engine a plan names is missing here or has another version."""
+
+    def __init__(self, run_id: str, engine: str, version: str, found: str) -> None:
+        super().__init__(
+            f"run {run_id} was planned with engine {engine} {version}, but {found}; "
+            "run it where that engine version is installed"
+        )
+
+
+class EngineContractError(RamanBayesError):
+    """An engine returned results that do not match the spectra it was given."""
+
+    def __init__(self, engine: str, version: str, problem: str) -> None:
+        super().__init__(f"engine {engine} {version} broke its contract: {problem}")
+
+
+class TaskLockedError(RamanBayesError):
+    """Another run-task holds a fresh ``_LOCK`` on this task.
+
+    ``holder`` is the lock's record, or None while its holder is still writing it.
+    """
+
+    def __init__(self, task_dir: Path, holder: LockHolder | None) -> None:
+        self.holder = holder
+        who = (
+            f"host {holder.host}, pid {holder.pid}, since {holder.started_at.isoformat()}"
+            if holder is not None
+            else "its holder is still writing the lock"
+        )
+        super().__init__(f"{task_dir}: task already running ({who})")
+
+
+class InvalidDoneMarkerError(RamanBayesError):
+    """A ``_DONE.json`` exists but cannot be read."""
+
+    def __init__(self, path: Path, problem: str) -> None:
+        super().__init__(f"{path}: unreadable done marker: {problem}")
+
+
+# ---------------------------------------------------------------- submit, status, cancel
+
+
+class RunNotInCatalogError(InputError):
+    """A command names a run the catalog does not have."""
+
+    def __init__(self, run_id: str, catalog: Path) -> None:
+        super().__init__(f"no run {run_id!r} in {catalog}")
+
+
+class BackendNotSupportedError(InputError):
+    """The run or profile needs a backend this command cannot use yet."""
+
+    def __init__(self, run_id: str, planned: str, profile: str, backend: str) -> None:
+        if planned != backend:
+            problem = f"was planned for {planned}, but profile {profile!r} uses {backend}"
+        else:
+            problem = f"uses {backend}, which is not supported yet; use a local profile"
+        super().__init__(f"run {run_id} {problem}")
+
+
+class LocalBackendOnlyError(InputError):
+    """A command that waits for its run was used with a profile that is not local."""
+
+    def __init__(self, command: str, profile: str, backend: str) -> None:
+        super().__init__(
+            f"raman {command} uses the local backend only, but profile {profile!r} uses "
+            f"{backend}; plan and submit the run instead"
+        )
+
+
+class SubmitRefusedError(InputError):
+    """The run's status does not allow this submission."""
+
+    def __init__(self, run_id: str, status: str, advice: str) -> None:
+        super().__init__(f"run {run_id} is {status}; {advice}")
+
+
+class MaxAttemptsError(InputError):
+    """Tasks that would be resubmitted have used every attempt."""
+
+    def __init__(self, run_id: str, tasks: Sequence[int], max_attempts: int) -> None:
+        names = ", ".join(str(t) for t in tasks)
+        super().__init__(
+            f"run {run_id}: task {names} has used its {max_attempts} attempts; "
+            "check logs/task-N.log in the run folder before planning the run again"
+        )
+
+
+class InvalidSubmissionsError(RamanBayesError):
+    """``submission.json`` exists but cannot be read."""
+
+    def __init__(self, path: Path, problem: str) -> None:
+        super().__init__(f"{path}: not a valid submission list: {problem}")
+
+
+# ---------------------------------------------------------------- collect
+
+
+class CollectRefusedError(InputError):
+    """The run is not complete and ``--partial`` was not given."""
+
+    def __init__(self, run_id: str, status: str) -> None:
+        super().__init__(
+            f"run {run_id} is {status}; wait for it to complete, or collect the tasks that "
+            "have finished with --partial"
+        )
+
+
+class NothingToCollectError(InputError):
+    """A partial collect of a run none of whose tasks has finished."""
+
+    def __init__(self, run_id: str) -> None:
+        super().__init__(f"run {run_id}: no task has finished yet, so there is nothing to collect")
+
+
+class ShardMismatchError(RamanBayesError):
+    """A task folder's parts are not the ones its ``_DONE.json`` recorded."""
+
+    def __init__(self, folder: Path, problem: str) -> None:
+        super().__init__(f"{folder}: {problem}; run the task again to rewrite its parts")
+
+
+class PartSchemaError(RamanBayesError):
+    """A part does not have the explicit schema it must be written with."""
+
+    def __init__(self, path: Path, kind: str) -> None:
+        super().__init__(f"{path}: not written with the {kind} schema")
+
+
+class DuplicateRowsError(RamanBayesError):
+    """The same fit or peak appears in more than one part."""
+
+    def __init__(self, kind: str, key: Mapping[str, object]) -> None:
+        where = ", ".join(f"{name.removesuffix('_id')} {value}" for name, value in key.items())
+        super().__init__(f"the {kind} for {where} appears more than once across the run's parts")
+
+
+class MixedCodeError(RamanBayesError):
+    """The tasks of one run ran different code, so their results are not one analysis."""
+
+    def __init__(self, run_id: str, differences: Sequence[str]) -> None:
+        super().__init__(f"run {run_id}: tasks ran different code: {'; '.join(differences)}")
+
+
+# ---------------------------------------------------------------- export and runs import
+
+
+class ExportRefusedError(InputError):
+    """Only collected runs have results to export."""
+
+    def __init__(self, run_id: str, status: str) -> None:
+        super().__init__(f"run {run_id} is {status}; collect it before exporting")
+
+
+class UnknownWindowError(InputError):
+    """An export names a window the run's recipe does not have."""
+
+    def __init__(self, window: str, windows: Sequence[str]) -> None:
+        super().__init__(f"no window {window!r} in the run's recipe; it has {', '.join(windows)}")
+
+
+class ResultsMissingError(RamanBayesError):
+    """A collected run's result files are not where the catalog says."""
+
+    def __init__(self, path: Path) -> None:
+        super().__init__(f"{path}: the run's results are missing; collect it again")
+
+
+class RunFolderPlaceError(InputError):
+    """A run folder to import is not where the profile keeps runs."""
+
+    def __init__(self, folder: Path, expected: Path) -> None:
+        super().__init__(
+            f"{folder}: runs are registered in place, so the folder must be {expected}; "
+            "move or copy it there first"
+        )
+
+
+class InvalidRunFolderError(InputError):
+    """A run folder to import has a run plan that cannot be read."""
+
+    def __init__(self, folder: Path, problem: str) -> None:
+        super().__init__(f"{folder}: cannot import: {problem}")
+
+
+class DatasetNotIngestedError(InputError):
+    """A run folder to import names a dataset the catalog does not have."""
+
+    def __init__(self, run_id: str, dataset_id: str) -> None:
+        super().__init__(
+            f"run {run_id} uses dataset {dataset_id!r}, which is not in the catalog; "
+            "ingest that dataset first"
+        )
+
+
+class DatasetHashMismatchError(InputError):
+    """A run folder to import was planned on other data than the catalog's dataset."""
+
+    def __init__(self, run_id: str, dataset_id: str) -> None:
+        super().__init__(
+            f"run {run_id} was planned on a dataset {dataset_id} whose content hash differs "
+            "from the one in the catalog"
         )
 
 

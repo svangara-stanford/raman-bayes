@@ -4,11 +4,14 @@ RunStatus lists the §7.4 states only; legal transitions are enforced by the cat
 A RunPlan checks itself on construction and on load: its run id is a canonical UUIDv7, its
 ``priors_hash`` is the §5 rule 9 hash of the recipe it carries, and its tasks are exactly the
 contiguous partition of the spectra into ``spectra_per_task`` blocks. ``config_hash`` is the
-catalog's hash of the fit configuration (§8.5). TaskStatus, TaskState and
-SubmissionRecord are provisional until sub-step 12 settles them.
+catalog's hash of the fit configuration (§8.5). TaskState and SubmissionRecord check the
+§7.4 invariants: a task is done exactly when it has a done marker, and has fit counts only
+then; a submission's tasks are listed once each, in order, and it has a Slurm job id exactly
+when it was a real Slurm submission.
 """
 
 import hashlib
+import itertools
 import json
 from enum import StrEnum
 from pathlib import Path
@@ -23,9 +26,11 @@ from raman_bayes.domain.priors_rules import priors_hash
 from raman_bayes.domain.uuid7 import is_uuid7
 
 __all__ = [
+    "IN_FLIGHT",
     "PLAN_SCHEMA_VERSION",
     "SEED_BITS",
     "SEED_LIMIT",
+    "SUBMISSION_SCHEMA_VERSION",
     "RunConfig",
     "RunPlan",
     "RunStatus",
@@ -38,6 +43,7 @@ __all__ = [
 ]
 
 PLAN_SCHEMA_VERSION = "1.0"
+SUBMISSION_SCHEMA_VERSION: Literal["1.0"] = "1.0"
 SEED_BITS = 63  # seeds fit the catalog's signed 64-bit INTEGER column
 SEED_LIMIT = 2**SEED_BITS
 
@@ -162,7 +168,11 @@ def config_hash(plan: RunPlan) -> str:
 
 
 class TaskStatus(StrEnum):
-    """Provisional: per-task state reported by a backend (markers merged with sacct, §7.3)."""
+    """Per-task state reported by a backend and kept in the catalog's ``task.status`` (§7.4).
+
+    ``done`` means ``_DONE.json`` exists, which wins over anything a scheduler says.
+    ``timeout``, ``out_of_memory`` and ``preempted`` come from sacct.
+    """
 
     PENDING = "pending"
     RUNNING = "running"
@@ -175,31 +185,85 @@ class TaskStatus(StrEnum):
     UNKNOWN = "unknown"
 
 
-class TaskState(DomainModel):
-    """Provisional: one task as seen by ``ExecutionBackend.poll``; mirrors the §8.5 task table.
+# Task states that may still finish without a resubmission; every other state is stopped.
+IN_FLIGHT: frozenset[TaskStatus] = frozenset({TaskStatus.PENDING, TaskStatus.RUNNING})
 
-    ``has_done_marker`` records whether ``shards/task=N/_DONE.json`` exists, the source of truth.
+Count = Annotated[int, Field(ge=0)]
+
+
+class TaskState(DomainModel):
+    """One task as ``ExecutionBackend.poll`` sees it; the §8.5 task columns plus the marker.
+
+    ``attempts`` counts submissions of the task so far (0 while planned). ``has_done_marker``
+    is True exactly when the status is done, and ``n_ok`` / ``n_failed`` (fits rows by status,
+    from ``_DONE.json``) are None unless it is. ``error`` is the last infrastructure error.
     """
 
     status: TaskStatus
-    attempts: int
+    attempts: Count
     slurm_job_id: str | None = None
     has_done_marker: bool
-    n_ok: int | None = None
-    n_failed: int | None = None
+    n_ok: Count | None = None
+    n_failed: Count | None = None
     error: str | None = None
+
+    @model_validator(mode="after")
+    def _done_iff_marker(self) -> Self:
+        done = self.status is TaskStatus.DONE
+        if self.has_done_marker != done:
+            raise PydanticCustomError(
+                "done_marker_mismatch",
+                "has_done_marker must be true exactly when the status is done (got {status})",
+                {"status": self.status.value},
+            )
+        if not done and (self.n_ok is not None or self.n_failed is not None):
+            raise PydanticCustomError(
+                "counts_before_done",
+                "n_ok and n_failed are set only when the task is done (got {status})",
+                {"status": self.status.value},
+            )
+        return self
 
 
 class SubmissionRecord(DomainModel):
-    """Provisional: contents of ``runs/<run_id>/submission.json`` (§8.1).
+    """One submission of a run's tasks; ``submission.json`` lists the real ones (§7.4).
 
+    ``attempt`` is 1 for the first submit and grows by one per resubmit. ``task_indices`` is
+    non-empty and strictly increasing. ``slurm_array_job_id`` is set exactly on a real
+    ``slurm_array`` submission, and ``script`` (the rendered sbatch) never on ``local``.
     ``submitted_at`` is pipeline-generated, so it must be timezone-aware (written in UTC).
     """
 
+    schema_version: Literal["1.0"] = SUBMISSION_SCHEMA_VERSION
     run_id: str
-    backend: str
+    attempt: Annotated[int, Field(ge=1)]
+    backend: Literal["local", "slurm_array"]
     submitted_at: AwareDatetime
+    host: str
     dry_run: bool
-    task_indices: tuple[int, ...]
+    task_indices: tuple[Count, ...]
     slurm_array_job_id: str | None = None
     script: str | None = None
+
+    @field_validator("task_indices")
+    @classmethod
+    def _increasing(cls, indices: tuple[int, ...]) -> tuple[int, ...]:
+        if not indices or any(b <= a for a, b in itertools.pairwise(indices)):
+            raise PydanticCustomError(
+                "task_indices_not_increasing",
+                "task_indices must be non-empty and strictly increasing",
+            )
+        return indices
+
+    @model_validator(mode="after")
+    def _backend_fields(self) -> Self:
+        slurm_job = self.backend == "slurm_array" and not self.dry_run
+        if (self.slurm_array_job_id is not None) != slurm_job:
+            raise PydanticCustomError(
+                "slurm_job_id_mismatch",
+                "slurm_array_job_id is set exactly on a slurm_array submission that is not a "
+                "dry run",
+            )
+        if self.backend == "local" and self.script is not None:
+            raise PydanticCustomError("script_on_local", "script is only for slurm_array")
+        return self

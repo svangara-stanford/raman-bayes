@@ -26,7 +26,7 @@ dependencies = [
     "pydantic>=2.6,<3",
     "pydantic-settings>=2.16.2,<3",
     "blake3>=1.0.11,<2",
-    "typer>=0.12",
+    "typer>=0.27.2",
     "rich>=13",
     "pyyaml>=6",
 ]
@@ -101,9 +101,6 @@ convention = "numpy"
     # Typer turns each command-line option into one function parameter, so a command's arity
     # is its option count (DESIGN.md §10) and cannot be grouped into a model.
     "PLR0913", "PLR0917",
-    # Temporary: the stub commands ignore their parameters until each is implemented. Remove
-    # in sub-step 14, when the last stub is replaced.
-    "ARG001",
 ]
 
 # ---------------------------------------------------------------- mypy
@@ -114,10 +111,11 @@ plugins = ["pydantic.mypy"]
 files = ["src", "tests", "scripts"]
 mypy_path = "src"
 
-# pyarrow and scipy ship no type hints (no py.typed); scope the ignore to those two only.
-# scipy-stubs exists but would be another dependency.
+# pyarrow, scipy and jsonschema (a dev dependency for the CLI schema tests) ship no type hints
+# (no py.typed); scope the ignore to those three only. scipy-stubs and types-jsonschema exist
+# but would be more dependencies.
 [[tool.mypy.overrides]]
-module = ["pyarrow", "pyarrow.*", "scipy", "scipy.*"]
+module = ["pyarrow", "pyarrow.*", "scipy", "scipy.*", "jsonschema", "jsonschema.*"]
 ignore_missing_imports = true
 
 [tool.pydantic-mypy]

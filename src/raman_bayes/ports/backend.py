@@ -1,7 +1,7 @@
 """ExecutionBackend Protocol (DESIGN.md §7.3): LocalBackend and SlurmArrayBackend implement it.
 
 Every backend executes ``raman run-task`` per task; ``poll`` treats ``_DONE.json`` markers as the
-source of truth. TaskState and SubmissionRecord are provisional models (``domain/run.py``).
+source of truth. TaskState and SubmissionRecord are in ``domain/run.py``.
 """
 
 from collections.abc import Mapping, Sequence

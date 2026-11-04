@@ -129,8 +129,10 @@ class DummyBackend:
     def submit(self, plan: RunPlan, *, dry_run: bool = False) -> SubmissionRecord:
         return SubmissionRecord(
             run_id=plan.run_id,
-            backend=self.name,
+            attempt=1,
+            backend="local",
             submitted_at=datetime(2026, 10, 23, tzinfo=UTC),
+            host="lab-pc",
             dry_run=dry_run,
             task_indices=tuple(t.task_index for t in plan.tasks),
         )
@@ -144,8 +146,10 @@ class DummyBackend:
     def resubmit(self, run_id: str, tasks: Sequence[int]) -> SubmissionRecord:
         return SubmissionRecord(
             run_id=run_id,
-            backend=self.name,
+            attempt=2,
+            backend="local",
             submitted_at=datetime(2026, 10, 23, tzinfo=UTC),
+            host="lab-pc",
             dry_run=False,
             task_indices=tuple(tasks),
         )

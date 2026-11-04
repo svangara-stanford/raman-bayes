@@ -29,6 +29,7 @@ from raman_bayes.config.profiles import resolve_profile
 from raman_bayes.domain.errors import InvalidProfileError
 
 __all__ = [
+    "DEFAULT_LOCK_STALE_MINUTES",
     "DEFAULT_PROFILE",
     "ENV_PREFIX",
     "EngineSettings",
@@ -43,6 +44,7 @@ __all__ = [
 ]
 
 DEFAULT_PROFILE = "local"
+DEFAULT_LOCK_STALE_MINUTES = 30.0
 ENV_PREFIX = "RAMAN_"
 _PROFILE_VAR = f"{ENV_PREFIX}PROFILE"  # selects the profile; never a settings value
 _STRICT = ConfigDict(frozen=True, extra="forbid")
@@ -88,7 +90,7 @@ class SlurmSettings(BaseModel):
     max_array_tasks: Annotated[int, Field(ge=1)]
     max_concurrent: Annotated[int, Field(ge=1)]
     pixi_bin: Path
-    lock_stale_minutes: Annotated[float, Field(gt=0)] = 30
+    lock_stale_minutes: Annotated[float, Field(gt=0)] = DEFAULT_LOCK_STALE_MINUTES
 
 
 class LimitsSettings(BaseModel):
@@ -129,6 +131,15 @@ class Settings(BaseSettings):
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         """Use the constructor's values only; ``load_settings`` has already layered them."""
         return (init_settings,)
+
+    @property
+    def lock_stale_minutes(self) -> float:
+        """Minutes after a task lock's last heartbeat at which it is stale (§7.2).
+
+        ``slurm.lock_stale_minutes``, or the default when the profile has no slurm section,
+        as local profiles do.
+        """
+        return self.slurm.lock_stale_minutes if self.slurm else DEFAULT_LOCK_STALE_MINUTES
 
     @model_validator(mode="after")
     def _slurm_backend_has_slurm_section(self) -> Self:

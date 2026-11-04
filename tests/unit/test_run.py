@@ -110,9 +110,12 @@ MODEL_KEYS: list[tuple[type[BaseModel], set[str]]] = [
     (
         SubmissionRecord,
         {
+            "schema_version",
             "run_id",
+            "attempt",
             "backend",
             "submitted_at",
+            "host",
             "dry_run",
             "task_indices",
             "slurm_array_job_id",
@@ -120,8 +123,6 @@ MODEL_KEYS: list[tuple[type[BaseModel], set[str]]] = [
         },
     ),
 ]
-
-PROVISIONAL: list[type] = [TaskStatus, TaskState, SubmissionRecord]
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "priors" / "design_example.yaml"
 PRIORS = PriorsSpec.model_validate(yaml.safe_load(FIXTURE.read_text(encoding="utf-8")))
@@ -172,12 +173,6 @@ def test_every_model_is_frozen_and_forbids_extra() -> None:
         assert model.model_config.get("extra") == "forbid", model.__name__
 
 
-@pytest.mark.parametrize("obj", PROVISIONAL, ids=lambda o: o.__name__)
-def test_provisional_marker(obj: type) -> None:
-    assert obj.__doc__ is not None
-    assert "provisional" in obj.__doc__.lower()
-
-
 def test_optional_defaults() -> None:
     state = TaskState(status=TaskStatus.PENDING, attempts=0, has_done_marker=False)
     assert (state.slurm_job_id, state.n_ok, state.n_failed, state.error) == (None,) * 4
@@ -213,8 +208,10 @@ def test_task_state_is_frozen() -> None:
 def _submission(**overrides: Any) -> dict[str, Any]:
     fields: dict[str, Any] = {
         "run_id": "0190b3d4-0000-7000-8000-000000000000",
+        "attempt": 1,
         "backend": "local",
         "submitted_at": datetime(2026, 10, 23, 12, 0, tzinfo=UTC),
+        "host": "lab-pc",
         "dry_run": False,
         "task_indices": [0, 1],
     }
@@ -266,25 +263,33 @@ plans = sizes.flatmap(
         tasks=st.just(task_ranges(*ns)),
     )
 )
-submissions = st.builds(
-    SubmissionRecord,
-    run_id=idents,
-    backend=st.sampled_from(["local", "slurm_array"]),
-    submitted_at=utc_dt,
-    dry_run=st.booleans(),
-    task_indices=st.lists(ints, max_size=5).map(tuple),
-    slurm_array_job_id=st.none() | st.from_regex(r"\A[0-9]{1,9}\Z"),
-    script=st.none() | st.text(),
+submissions = st.tuples(st.sampled_from(["local", "slurm_array"]), st.booleans()).flatmap(
+    lambda kind: st.builds(
+        SubmissionRecord,
+        run_id=idents,
+        attempt=st.integers(min_value=1, max_value=100),
+        backend=st.just(kind[0]),
+        submitted_at=utc_dt,
+        host=idents,
+        dry_run=st.just(kind[1]),
+        task_indices=st.sets(ints, min_size=1, max_size=5).map(lambda s: tuple(sorted(s))),
+        slurm_array_job_id=st.from_regex(r"\A[0-9]{1,9}\Z")
+        if kind == ("slurm_array", False)
+        else st.none(),
+        script=st.text() if kind[0] == "slurm_array" else st.none(),
+    )
 )
-task_states = st.builds(
-    TaskState,
-    status=st.sampled_from(TaskStatus),
-    attempts=ints,
-    slurm_job_id=st.none() | st.from_regex(r"\A[0-9]{1,9}_[0-9]{1,4}\Z"),
-    has_done_marker=st.booleans(),
-    n_ok=st.none() | ints,
-    n_failed=st.none() | ints,
-    error=st.none() | st.text(),
+task_states = st.sampled_from(TaskStatus).flatmap(
+    lambda status: st.builds(
+        TaskState,
+        status=st.just(status),
+        attempts=ints,
+        slurm_job_id=st.none() | st.from_regex(r"\A[0-9]{1,9}_[0-9]{1,4}\Z"),
+        has_done_marker=st.just(status is TaskStatus.DONE),
+        n_ok=st.none() | ints if status is TaskStatus.DONE else st.none(),
+        n_failed=st.none() | ints if status is TaskStatus.DONE else st.none(),
+        error=st.none() | st.text(),
+    )
 )
 
 
@@ -455,3 +460,76 @@ def test_run_config_and_run_plan_not_provisional() -> None:
     for model in (RunConfig, RunPlan):
         assert model.__doc__ is not None
         assert "provisional" not in model.__doc__.lower(), model.__name__
+
+
+# ---------------------------------------------------------------- §7.4 TaskState, SubmissionRecord
+
+
+def _state(**overrides: Any) -> dict[str, Any]:
+    return {"status": "running", "attempts": 1, "has_done_marker": False} | overrides
+
+
+def test_task_state_done_iff_marker() -> None:
+    TaskState.model_validate(_state(status="done", has_done_marker=True))
+    for status, marker in [("done", False), ("running", True), ("failed", True)]:
+        with pytest.raises(ValidationError, match="has_done_marker"):
+            TaskState.model_validate(_state(status=status, has_done_marker=marker))
+
+
+def test_task_state_counts_only_when_done() -> None:
+    fields = _state(status="done", has_done_marker=True, n_ok=5, n_failed=1)
+    done = TaskState.model_validate(fields)
+    assert (done.n_ok, done.n_failed) == (5, 1)
+    for counts in ({"n_ok": 5}, {"n_failed": 0}):
+        with pytest.raises(ValidationError, match="only when the task is done"):
+            TaskState.model_validate(_state(status="failed", **counts))
+    with pytest.raises(ValidationError):
+        TaskState.model_validate(_state(status="done", has_done_marker=True, n_ok=-1))
+
+
+def test_task_state_attempts_non_negative() -> None:
+    assert TaskState.model_validate(_state(status="pending", attempts=0)).attempts == 0
+    with pytest.raises(ValidationError) as exc:
+        TaskState.model_validate(_state(attempts=-1))
+    assert exc.value.errors()[0]["loc"] == ("attempts",)
+
+
+def test_submission_task_indices_non_empty_increasing() -> None:
+    assert SubmissionRecord.model_validate(_submission(task_indices=[3])).task_indices == (3,)
+    for indices in ([], [1, 0], [0, 0], [-1, 2]):
+        with pytest.raises(ValidationError, match="task_indices"):
+            SubmissionRecord.model_validate(_submission(task_indices=indices))
+
+
+def test_submission_slurm_id_iff_slurm_and_not_dry_run() -> None:
+    slurm = {"backend": "slurm_array", "script": "#!/bin/bash"}
+    SubmissionRecord.model_validate(_submission(**slurm, slurm_array_job_id="8812"))
+    SubmissionRecord.model_validate(_submission(**slurm, dry_run=True))
+    SubmissionRecord.model_validate(_submission())
+    for fields in (
+        slurm,
+        {**slurm, "dry_run": True, "slurm_array_job_id": "8812"},
+        {"slurm_array_job_id": "8812"},
+    ):
+        with pytest.raises(ValidationError, match="slurm_array_job_id"):
+            SubmissionRecord.model_validate(_submission(**fields))
+    with pytest.raises(ValidationError, match="script"):
+        SubmissionRecord.model_validate(_submission(script="#!/bin/bash"))
+    with pytest.raises(ValidationError, match="backend"):
+        SubmissionRecord.model_validate(_submission(backend="dummy"))
+
+
+def test_submission_attempt_at_least_1() -> None:
+    assert SubmissionRecord.model_validate(_submission(attempt=3)).attempt == 3
+    with pytest.raises(ValidationError) as exc:
+        SubmissionRecord.model_validate(_submission(attempt=0))
+    assert exc.value.errors()[0]["loc"] == ("attempt",)
+    assert SubmissionRecord.model_validate(_submission()).schema_version == "1.0"
+
+
+def test_task_state_and_submission_not_provisional() -> None:
+    for model in (TaskStatus, TaskState, SubmissionRecord):
+        assert model.__doc__ is not None
+        assert "provisional" not in model.__doc__.lower(), model.__name__
+    assert run.__doc__ is not None
+    assert "provisional" not in run.__doc__.lower()

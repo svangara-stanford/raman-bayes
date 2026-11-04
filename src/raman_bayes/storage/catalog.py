@@ -26,7 +26,7 @@ from raman_bayes.domain.errors import (
     UnsupportedCatalogError,
 )
 from raman_bayes.domain.priors import PriorsSpec
-from raman_bayes.domain.run import RunStatus, TaskSpec, TaskState, TaskStatus
+from raman_bayes.domain.run import IN_FLIGHT, RunStatus, TaskSpec, TaskState, TaskStatus
 
 __all__ = [
     "BUSY_TIMEOUT_S",
@@ -58,7 +58,6 @@ RUN_TRANSITIONS: frozenset[tuple[RunStatus, RunStatus]] = frozenset(
         (_S.FAILED, _S.CANCELLED),
     }
 )
-_IN_FLIGHT = frozenset({TaskStatus.PENDING, TaskStatus.RUNNING})
 
 
 def _one_of(enum: type[RunStatus] | type[TaskStatus]) -> str:
@@ -213,6 +212,13 @@ class Catalog:
         rows = self._read("SELECT * FROM run WHERE run_id = ?", (run_id,))
         return _run_row(rows[0]) if rows else None
 
+    def require_run(self, run_id: str) -> RunRow:
+        """Return the run row; raises UnknownRunError when there is no such run."""
+        row = self.get_run(run_id)
+        if row is None:
+            raise UnknownRunError(run_id)
+        return row
+
     def list_runs(self) -> list[RunRow]:
         """Return every run, oldest first."""
         return [_run_row(r) for r in self._read("SELECT * FROM run ORDER BY created_at, run_id")]
@@ -312,6 +318,18 @@ class Catalog:
             if current is not expected:
                 raise StaleStatusError(run_id, expected.value, current.value)
             _set_status(conn, run_id, new, now or datetime.now(UTC))
+
+    def mark_collected(self, run_id: str, result_uri: str, *, now: datetime | None = None) -> None:
+        """Move a complete run to collected and record where its results are, atomically.
+
+        Raises UnknownRunError, or StaleStatusError when the run is not complete.
+        """
+        with self._write() as conn:
+            current = _status(conn, run_id)
+            if current is not RunStatus.COMPLETE:
+                raise StaleStatusError(run_id, RunStatus.COMPLETE.value, current.value)
+            _set_status(conn, run_id, RunStatus.COLLECTED, now or datetime.now(UTC))
+            conn.execute("UPDATE run SET result_uri = ? WHERE run_id = ?", (result_uri, run_id))
 
     def update_task(self, run_id: str, task_index: int, state: TaskState) -> None:
         """Store ``state`` as the task's last known state; raises UnknownTaskError if absent."""
@@ -422,7 +440,7 @@ def _implied(current: RunStatus, tasks: Sequence[TaskStatus]) -> RunStatus | Non
         return RunStatus.RUNNING
     if current is RunStatus.RUNNING and all(s is TaskStatus.DONE for s in tasks):
         return RunStatus.COMPLETE
-    stopped = not any(s in _IN_FLIGHT for s in tasks)
+    stopped = not any(s in IN_FLIGHT for s in tasks)
     unfinished = not all(s is TaskStatus.DONE for s in tasks)
     if current in (RunStatus.SUBMITTED, RunStatus.RUNNING) and stopped and unfinished:
         return RunStatus.FAILED

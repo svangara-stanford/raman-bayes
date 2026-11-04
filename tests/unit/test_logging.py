@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from raman_bayes.logging import LOGGER_NAME, setup_logging
+from raman_bayes.logging import LOGGER_NAME, setup_logging, task_log
 
 
 @pytest.fixture(autouse=True)
@@ -91,3 +91,24 @@ def test_foreign_handlers_are_left_alone() -> None:
     setup_logging()
     setup_logging()
     assert foreign in logger.handlers
+
+
+def test_task_log_adds_info_file_without_louder_console(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    logger = setup_logging()
+    log_file = tmp_path / "logs" / "task-0.log"
+    with task_log(log_file):
+        logger.info("progress")
+        logger.warning("trouble")
+    logger.info("after the task")
+    text = log_file.read_text(encoding="utf-8")
+    assert "progress" in text
+    assert "trouble" in text
+    assert "after the task" not in text
+    err = capsys.readouterr().err
+    assert "trouble" in err
+    assert "progress" not in err
+    assert logger.level == logging.WARNING
+    assert len(logger.handlers) == 1
+    assert logger.handlers[0].level == logging.NOTSET
