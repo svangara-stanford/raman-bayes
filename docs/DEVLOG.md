@@ -231,3 +231,11 @@ Short, dated entries: what was done, what was decided, anything overridden. Newe
 - `pixi run test` measures branch coverage of `raman_bayes` and fails under 95 % (main measured 97.6 %); `pixi run test --no-cov PATH` runs a subset. `.coverage` data files are gitignored. `pixi run lint` adds `deptry src`, with DEP003 ignored for `pydantic_core` (pydantic documents those imports and pins pydantic-core's exact version).
 - CLAUDE.md: `--json` payload hard stop; coverage floor hard stop; fix red CI before the next sub-step; summaries list added files and what reads them; engine-agnostic run-task, collect and export; worker counts from flags and profiles only, `fit_many` gets whole sub-batches; one `except Exception` at the engine-call boundary, refitting one spectrum at a time when `fit_many` raises; ADRs retired pending v0.9.
 - For DESIGN v0.9: §12 drops the ADR sentence and §2 drops `adr/`; §8.4 notes DuckDB is not a dependency; §7.2 records the engine-exception rule above.
+
+## 2026-11-03 — Scope check (user)
+- Four-column scope check (paper, release, Sherlock, Perlmutter GPU). The clusters are off the paper's critical path: full-accuracy fits of the 11,250 spectra in 2 windows are about 26 core-hours. Phase 2 and Perlmutter stay after the engine merge.
+- Agentic priors stay out of scope (§15 #12); the draft's claims about them come out before submission.
+- Benchmarks and paper figures (baselines, bootstrap, F1–F7) go in a third repo that installs the tagged release. It is never merged into raman-bayes.
+- The full dataset is released with the paper.
+- Final pre-release check: the draft matches the code. The code is the source of truth; the draft describes the old engine and is rewritten to the new one.
+- For DESIGN v0.9 (reproducibility contract): the pipeline gives each fit one `SeedSequence(run_seed, spawn_key=(window_index, spectrum_id))`. Everything below it (chains, sub-moves, JAX keys) belongs to the engine, is derived only from that seed, and is recorded in the engine's provenance. `n_chains` is an engine option.
