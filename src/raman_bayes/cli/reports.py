@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from raman_bayes.app.collect import CollectResult, CollectStatus
+from raman_bayes.app.doctor import DoctorReport
 from raman_bayes.app.ingest import IngestPreview, ScanOutcome, ScanStatus
 from raman_bayes.app.run_task import RunTaskStatus, TaskOutcome
 from raman_bayes.app.status import RunView
@@ -18,6 +19,7 @@ from raman_bayes.domain.run import RunPlan, RunStatus, TaskState, TaskStatus
 
 __all__ = [
     "collect_report",
+    "doctor_report",
     "ingest_report",
     "plan_report",
     "qc_summary",
@@ -194,4 +196,12 @@ def collect_report(result: CollectResult) -> str:
     ]
     if result.archive_dir is not None:
         lines.append(f"  copied to {result.archive_dir}")
+    return "\n".join(lines)
+
+
+def doctor_report(report: DoctorReport) -> str:
+    """List every check with its status, after the profile and backend it ran with."""
+    settings = report.settings
+    lines = [f"profile {settings.profile} ({report.source}), backend {settings.backend}"]
+    lines += [f"{c.status.value:<5} {c.name}: {c.detail}" for c in report.checks]
     return "\n".join(lines)

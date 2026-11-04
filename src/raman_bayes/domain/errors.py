@@ -20,11 +20,14 @@ __all__ = [
     "CollectRefusedError",
     "ConfigError",
     "CountTooLargeError",
+    "DatasetHashMismatchError",
+    "DatasetNotIngestedError",
     "DatasetStoreError",
     "DuplicateRowsError",
     "DuplicateSpectrumError",
     "EngineContractError",
     "EngineMismatchError",
+    "ExportRefusedError",
     "FilenamePatternError",
     "FilenamePatternGroupsError",
     "FilenamePatternSyntaxError",
@@ -39,6 +42,7 @@ __all__ = [
     "InvalidDoneMarkerError",
     "InvalidEngineError",
     "InvalidProfileError",
+    "InvalidRunFolderError",
     "InvalidRunPlanError",
     "InvalidScanInfoError",
     "InvalidSubmissionsError",
@@ -58,6 +62,8 @@ __all__ = [
     "OutOfGridSpectrumError",
     "PartSchemaError",
     "RamanBayesError",
+    "ResultsMissingError",
+    "RunFolderPlaceError",
     "RunNotInCatalogError",
     "RunPlanNotFoundError",
     "ScanFolderError",
@@ -77,6 +83,7 @@ __all__ = [
     "UnknownProfileError",
     "UnknownRunError",
     "UnknownTaskError",
+    "UnknownWindowError",
     "UnsetVariableError",
     "UnsupportedCatalogError",
 ]
@@ -542,6 +549,67 @@ class MixedCodeError(RamanBayesError):
 
     def __init__(self, run_id: str, differences: Sequence[str]) -> None:
         super().__init__(f"run {run_id}: tasks ran different code: {'; '.join(differences)}")
+
+
+# ---------------------------------------------------------------- export and runs import
+
+
+class ExportRefusedError(InputError):
+    """Only collected runs have results to export."""
+
+    def __init__(self, run_id: str, status: str) -> None:
+        super().__init__(f"run {run_id} is {status}; collect it before exporting")
+
+
+class UnknownWindowError(InputError):
+    """An export names a window the run's recipe does not have."""
+
+    def __init__(self, window: str, windows: Sequence[str]) -> None:
+        super().__init__(f"no window {window!r} in the run's recipe; it has {', '.join(windows)}")
+
+
+class ResultsMissingError(RamanBayesError):
+    """A collected run's result files are not where the catalog says."""
+
+    def __init__(self, path: Path) -> None:
+        super().__init__(f"{path}: the run's results are missing; collect it again")
+
+
+class RunFolderPlaceError(InputError):
+    """A run folder to import is not where the profile keeps runs."""
+
+    def __init__(self, folder: Path, expected: Path) -> None:
+        super().__init__(
+            f"{folder}: runs are registered in place, so the folder must be {expected}; "
+            "move or copy it there first"
+        )
+
+
+class InvalidRunFolderError(InputError):
+    """A run folder to import has a run plan that cannot be read."""
+
+    def __init__(self, folder: Path, problem: str) -> None:
+        super().__init__(f"{folder}: cannot import: {problem}")
+
+
+class DatasetNotIngestedError(InputError):
+    """A run folder to import names a dataset the catalog does not have."""
+
+    def __init__(self, run_id: str, dataset_id: str) -> None:
+        super().__init__(
+            f"run {run_id} uses dataset {dataset_id!r}, which is not in the catalog; "
+            "ingest that dataset first"
+        )
+
+
+class DatasetHashMismatchError(InputError):
+    """A run folder to import was planned on other data than the catalog's dataset."""
+
+    def __init__(self, run_id: str, dataset_id: str) -> None:
+        super().__init__(
+            f"run {run_id} was planned on a dataset {dataset_id} whose content hash differs "
+            "from the one in the catalog"
+        )
 
 
 # ---------------------------------------------------------------- legacy priors CSV

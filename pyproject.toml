@@ -101,9 +101,6 @@ convention = "numpy"
     # Typer turns each command-line option into one function parameter, so a command's arity
     # is its option count (DESIGN.md §10) and cannot be grouped into a model.
     "PLR0913", "PLR0917",
-    # Temporary: the stub commands ignore their parameters until each is implemented. Remove
-    # in sub-step 14, when the last stub is replaced.
-    "ARG001",
 ]
 
 # ---------------------------------------------------------------- mypy

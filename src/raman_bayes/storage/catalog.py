@@ -212,6 +212,13 @@ class Catalog:
         rows = self._read("SELECT * FROM run WHERE run_id = ?", (run_id,))
         return _run_row(rows[0]) if rows else None
 
+    def require_run(self, run_id: str) -> RunRow:
+        """Return the run row; raises UnknownRunError when there is no such run."""
+        row = self.get_run(run_id)
+        if row is None:
+            raise UnknownRunError(run_id)
+        return row
+
     def list_runs(self) -> list[RunRow]:
         """Return every run, oldest first."""
         return [_run_row(r) for r in self._read("SELECT * FROM run ORDER BY created_at, run_id")]

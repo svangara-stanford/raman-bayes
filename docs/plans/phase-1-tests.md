@@ -486,6 +486,7 @@ Approved as a block on two conditions: each change is recorded in the DEVLOG ent
 | `test_emit_human_success_goes_to_stdout` (test_cli_output) | 05 | warnings on stderr, message alone on stdout | warnings to stderr for every command; approved 2026-11-02 |
 | `test_run_task_workers` ("4" → 3), `test_export_accepts_all_section_8_4_options`, `test_ingest_accepts_all_flags` (test_cli_commands) | 07, 11, 14 | assert "not a usage error" instead of exit 3; each command's own tests cover real behaviour | real commands |
 | CI `wheel-install` step `test "$code" -eq 3` for `doctor --json` (ci.yml, not a test file) | 14 | [C15] becomes `-eq 0`. Sub-step 14 is a planned stop: commit doctor, write the ci.yml diff to the scratchpad, print it, stop; Sreya applies it. A red wheel-install job at that point is expected and is not the "CI red twice" hard stop. | real doctor |
+| `test_console_script_without_a_tty` (test_cli_console_script) | 14 | doctor assertions: exit 3 and "not implemented yet" become exit 0, "profile local" in the text and an exit-0 envelope; the subprocess runs with cwd = pytest's `tmp_path` and every `RAMAN_*` variable removed, so doctor checks an empty local setup alike on a laptop with `data/` and in CI; all ESC assertions kept | the in-process twin of the C15 wheel-install step; approved 2026-11-04 |
 
 ## Decision tags
 

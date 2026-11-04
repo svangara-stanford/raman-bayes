@@ -1,4 +1,4 @@
-"""The ``raman`` command tree (DESIGN.md §10). Commands not built yet are stubs that exit 3.
+"""The ``raman`` command tree (DESIGN.md §10).
 
 Help is plain Click (``rich_markup_mode=None``): Typer forces a Rich terminal when
 GITHUB_ACTIONS, FORCE_COLOR or PY_COLORS is set, which would put ANSI into piped ``--help``.
@@ -15,11 +15,14 @@ import typer
 
 from raman_bayes.app import catalog_views, priors_csv, validate
 from raman_bayes.app.collect import CollectRequest, CollectStatus, collect_run
+from raman_bayes.app.doctor import CheckStatus, DoctorReport, run_doctor
+from raman_bayes.app.export import ExportRequest, LegacyOptions, export_run
 from raman_bayes.app.ingest import IngestRequest, ScanOutcome, ScanStatus
 from raman_bayes.app.ingest import ingest as ingest_scans
 from raman_bayes.app.plan import RUN_PLAN_FILE, plan_run
 from raman_bayes.app.run_task import RunTaskStatus, TaskOutcome, TaskRequest
 from raman_bayes.app.run_task import run_task as run_one_task
+from raman_bayes.app.runs_import import ImportStatus, import_run
 from raman_bayes.app.status import RunView, refresh_run, watch_run
 from raman_bayes.app.submit import (
     CancelStatus,
@@ -33,6 +36,7 @@ from raman_bayes.app.submit import (
 from raman_bayes.cli.output import CliEnvelope, ExitCode, emit
 from raman_bayes.cli.reports import (
     collect_report,
+    doctor_report,
     ingest_report,
     plan_report,
     qc_summary,
@@ -79,17 +83,6 @@ runs_app = _typer("Inspect and register runs.")
 app.add_typer(datasets_app, name="datasets")
 app.add_typer(priors_app, name="priors")
 app.add_typer(runs_app, name="runs")
-
-
-def _stub(command: str, as_json: bool) -> NoReturn:
-    envelope = CliEnvelope(
-        command=command,
-        exit_code=ExitCode.NOTHING_TO_DO,
-        ok=False,
-        message=f"raman {command}: not implemented yet",
-    )
-    emit(envelope, as_json=as_json)
-    raise typer.Exit(code=envelope.exit_code)
 
 
 def _invalid(
@@ -278,6 +271,9 @@ def validate_priors(
     as_json: JsonOpt = False,
 ) -> None:
     """Validate a priors recipe; exit 2 on error."""
+    _settings(
+        "validate-priors", profile, as_json
+    )  # every command resolves --profile, so a bad one fails alike
     result = validate.validate_priors_file(file)
     if result.spec is None:
         message = f"{file}: invalid priors ({len(result.errors)} error(s))"
@@ -312,6 +308,9 @@ def priors_import_csv(
     as_json: JsonOpt = False,
 ) -> None:
     """Convert a legacy CSV into a priors YAML window fragment."""
+    _settings(
+        "priors import-csv", profile, as_json
+    )  # every command resolves --profile, so a bad one fails alike
     result = priors_csv.import_window(file, window_id, range_cm1)
     if result.window is None or result.fragment is None:
         message = f"{file}: cannot import ({len(result.errors)} error(s))"
@@ -335,6 +334,9 @@ def priors_export_csv(
     as_json: JsonOpt = False,
 ) -> None:
     """Write one window of a priors recipe in the legacy CSV format."""
+    _settings(
+        "priors export-csv", profile, as_json
+    )  # every command resolves --profile, so a bad one fails alike
     result = priors_csv.export_window(file, window_id)
     if result.csv is None:
         message = f"{file}: cannot export window {window_id!r} ({len(result.errors)} error(s))"
@@ -451,7 +453,7 @@ def _driver(command: str, call: Callable[[], _T], as_json: bool) -> _T:
         )
         _finish(envelope, as_json)
     except (RamanBayesError, OSError) as exc:
-        _infrastructure(command, "run stopped", exc, as_json)
+        _infrastructure(command, "storage or backend problem", exc, as_json)
 
 
 def _submit_envelope(
@@ -666,7 +668,17 @@ def export(
     as_json: JsonOpt = False,
 ) -> None:
     """Export results as legacy CSV or flattened CSV."""
-    _stub("export", as_json)
+    loaded = _settings("export", profile, as_json)
+    legacy = LegacyOptions(
+        min_presence=min_presence,
+        height_source=height_source.value,
+        absent_fill=absent_fill,
+        coords=coords.value,
+    )
+    request = ExportRequest(run, export_format.value, window, legacy)
+    result = _driver("export", lambda: export_run(request, loaded), as_json)
+    files = [str(f) for f in result.files]
+    _succeed("export", "\n".join(files), {"run_id": run, "files": files}, as_json)
 
 
 @runs_app.command("list")
@@ -701,7 +713,26 @@ def runs_import(
     as_json: JsonOpt = False,
 ) -> None:
     """Register a run folder copied from elsewhere."""
-    _stub("runs import", as_json)
+    loaded = _settings("runs import", profile, as_json)
+    result = _driver("runs import", lambda: import_run(directory, loaded), as_json)
+    imported = result.status is ImportStatus.IMPORTED
+    code = ExitCode.OK if imported else ExitCode.NOTHING_TO_DO
+    state = result.run.status.value
+    message = (
+        f"registered run {result.run.run_id} ({state}) from {directory}"
+        if imported
+        else f"run {result.run.run_id} is already in the catalog ({state}); nothing to do"
+    )
+    data = {
+        "run_id": result.run.run_id,
+        "status": result.status.value,
+        "run_status": state,
+        "run": result.run.as_json(),
+    }
+    envelope = CliEnvelope(
+        command="runs import", exit_code=code, ok=imported, message=message, data=data
+    )
+    _finish(envelope, as_json)
 
 
 # ---------------------------------------------------------------- environment
@@ -710,4 +741,33 @@ def runs_import(
 @app.command()
 def doctor(profile: ProfileOpt = None, as_json: JsonOpt = False) -> None:
     """Check environment, paths, ${VAR} resolution, pixi_bin, quotas and Slurm limits."""
-    _stub("doctor", as_json)
+    report = run_doctor(_settings("doctor", profile, as_json))
+    code = ExitCode.BACKEND if report.failed else ExitCode.OK
+    envelope = CliEnvelope(
+        command="doctor",
+        exit_code=code,
+        ok=code is ExitCode.OK,
+        message=doctor_report(report),
+        data=_doctor_data(report),
+        warnings=_checks(report, CheckStatus.WARN),
+        errors=_checks(report, CheckStatus.FAIL),
+    )
+    _finish(envelope, as_json)
+
+
+def _checks(report: DoctorReport, status: CheckStatus) -> tuple[str, ...]:
+    return tuple(f"{c.name}: {c.detail}" for c in report.checks if c.status is status)
+
+
+def _doctor_data(report: DoctorReport) -> dict[str, Any]:
+    settings = report.settings
+    return {
+        "profile": settings.profile,
+        "profile_source": report.source,
+        "backend": settings.backend,
+        "paths": settings.paths.model_dump(mode="json"),
+        "engines": list(report.engines),
+        "checks": [
+            {"name": c.name, "status": c.status.value, "detail": c.detail} for c in report.checks
+        ],
+    }

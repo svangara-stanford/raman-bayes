@@ -15,6 +15,7 @@ from raman_bayes.domain.dataset import DatasetManifest
 from raman_bayes.domain.errors import (
     IllegalTransitionError,
     StaleStatusError,
+    UnknownRunError,
     UnsupportedCatalogError,
 )
 from raman_bayes.domain.priors import PriorsSpec
@@ -382,3 +383,9 @@ def test_mark_collected_records_result_uri_and_needs_complete(
     run = catalog.get_run(run_id)
     assert run is not None
     assert (run.status, run.result_uri) == (S.COLLECTED, "/archive/r/results")
+
+
+def test_require_run_raises_for_an_unknown_run(catalog: Catalog, run_id: str) -> None:
+    assert catalog.require_run(run_id).run_id == run_id
+    with pytest.raises(UnknownRunError, match="nope"):
+        catalog.require_run("nope")
