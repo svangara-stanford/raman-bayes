@@ -15,7 +15,6 @@ pydantic = ">=2.6,<3"
 typer = ">=0.12"
 rich = ">=13"
 pyyaml = ">=6"
-python-duckdb = ">=1.0"
 pydantic-settings = ">=2.16.2,<3"
 blake3 = ">=1.0.11,<2"
 
@@ -31,15 +30,21 @@ import-linter = ">=2.0"
 pre-commit = ">=3.7"
 types-pyyaml = ">=6"
 hatchling = ">=1.24"
+python-duckdb = ">=2.0.0,<3"
+pytest-cov = ">=7.1.0,<8"
+deptry = ">=0.25.1,<0.26"
 
 [feature.dev.tasks]
-test = "pytest"
-lint = { depends-on = ["lint-ruff", "lint-format", "lint-types", "lint-imports"] }
+# --cov=raman_bayes, not bare --cov: --cov takes an optional value, so an appended test path
+# would be read as the coverage source. Run a subset with `pixi run test --no-cov PATH`.
+test = "pytest --cov=raman_bayes"
+lint = { depends-on = ["lint-ruff", "lint-format", "lint-types", "lint-imports", "lint-deps"] }
 lint-ruff = "ruff check ."
 lint-format = "ruff format --check ."
 lint-types = "mypy"
 # --no-cache: no .import_linter_cache/ in the tree (the tests also plant violations in tmp copies).
 lint-imports = "lint-imports --no-cache"
+lint-deps = "deptry src"
 fmt = "ruff format . && ruff check --fix ."
 gen-schemas = "python scripts/gen_schemas.py"
 
