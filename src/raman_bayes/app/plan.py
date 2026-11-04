@@ -14,11 +14,16 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pydantic import JsonValue
+from pydantic import JsonValue, ValidationError
 
 from raman_bayes.app.validate import validate_priors_file
 from raman_bayes.config.settings import LoadedSettings, Settings
-from raman_bayes.domain.errors import InputError, TaskSizeRequiredError
+from raman_bayes.domain.errors import (
+    InputError,
+    InvalidRunPlanError,
+    RunPlanNotFoundError,
+    TaskSizeRequiredError,
+)
 from raman_bayes.domain.priors import PriorsSpec
 from raman_bayes.domain.priors_rules import check_axis, priors_hash
 from raman_bayes.domain.run import SEED_BITS, RunConfig, RunPlan, config_hash
@@ -29,7 +34,7 @@ from raman_bayes.ports.engine import EngineConfig, PeakEngine
 from raman_bayes.storage.catalog import Catalog, RunRecord
 from raman_bayes.storage.zarr_dataset import StoredDataset, open_dataset
 
-__all__ = ["RUN_PLAN_FILE", "PlanResult", "plan_run"]
+__all__ = ["RUN_PLAN_FILE", "PlanResult", "plan_run", "read_plan"]
 
 RUN_PLAN_FILE = "run_plan.json"
 
@@ -162,3 +167,23 @@ def _register(catalog: Catalog, plan: RunPlan, yaml_text: str) -> None:
         created_at=plan.created_at,
     )
     catalog.create_run(record, plan.tasks)
+
+
+def read_plan(run_dir: Path) -> RunPlan:
+    """Return the plan in ``run_dir/run_plan.json``, checked as on construction.
+
+    Raises RunPlanNotFoundError when there is no plan file, and InvalidRunPlanError when it is
+    not a valid plan or belongs to another run.
+    """
+    path = run_dir / RUN_PLAN_FILE
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        raise RunPlanNotFoundError(path) from None
+    try:
+        plan = RunPlan.model_validate_json(text)
+    except ValidationError as exc:
+        raise InvalidRunPlanError(path, str(exc)) from exc
+    if plan.run_id != run_dir.name:
+        raise InvalidRunPlanError(path, f"it is the plan of run {plan.run_id}")
+    return plan

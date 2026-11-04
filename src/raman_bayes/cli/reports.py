@@ -8,11 +8,12 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from raman_bayes.app.ingest import IngestPreview, ScanOutcome, ScanStatus
+from raman_bayes.app.run_task import RunTaskStatus, TaskOutcome
 from raman_bayes.domain.dataset import AxisSpec
 from raman_bayes.domain.qc import QCCounts
 from raman_bayes.domain.run import RunPlan
 
-__all__ = ["ingest_report", "plan_report", "qc_summary"]
+__all__ = ["ingest_report", "plan_report", "qc_summary", "task_report"]
 
 _TASKS_SHOWN = 20  # a Slurm plan may have hundreds; the JSON envelope lists them all
 
@@ -88,3 +89,26 @@ def plan_report(plan: RunPlan, run_plan: Path) -> str:
     if len(plan.tasks) > _TASKS_SHOWN:
         lines.append(f"  ... and {len(plan.tasks) - _TASKS_SHOWN} more tasks")
     return "\n".join(lines)
+
+
+def task_report(run: str, outcome: TaskOutcome) -> str:
+    """Describe what run-task did with one task: its fits, or who holds it."""
+    head = f"task {outcome.task.task_index} of run {run}"
+    marker, holder = outcome.marker, outcome.holder
+    if marker is None:  # only a task held by another process has no done marker
+        who = (
+            f"host {holder.host}, pid {holder.pid}, since {holder.started_at:%Y-%m-%d %H:%M:%S %Z}"
+            if holder is not None
+            else "its lock is being written"
+        )
+        return f"{head}: already running ({who}); nothing to do"
+    fits = (
+        f"{marker.n_fits} fits ({marker.n_ok} ok, {marker.n_failed} failed, "
+        f"{marker.n_skipped_qc} skipped_qc)"
+    )
+    if outcome.status is RunTaskStatus.ALREADY_DONE:
+        return f"{head}: already done, {fits}; nothing to do"
+    return (
+        f"{head}: done, {fits}; {outcome.n_parts_written} sub-batch(es) written, "
+        f"{outcome.n_parts_kept} kept"
+    )

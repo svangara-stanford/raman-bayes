@@ -5,6 +5,7 @@ GITHUB_ACTIONS, FORCE_COLOR or PY_COLORS is set, which would put ANSI into piped
 Command output goes through ``output.make_console``, which is colour-free off a TTY.
 """
 
+from datetime import timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any, NoReturn
@@ -15,11 +16,14 @@ from raman_bayes.app import catalog_views, priors_csv, validate
 from raman_bayes.app.ingest import IngestRequest, ScanOutcome, ScanStatus
 from raman_bayes.app.ingest import ingest as ingest_scans
 from raman_bayes.app.plan import RUN_PLAN_FILE, plan_run
+from raman_bayes.app.run_task import RunTaskStatus, TaskOutcome, TaskRequest
+from raman_bayes.app.run_task import run_task as run_one_task
 from raman_bayes.cli.output import CliEnvelope, ExitCode, emit
-from raman_bayes.cli.reports import ingest_report, plan_report, qc_summary
+from raman_bayes.cli.reports import ingest_report, plan_report, qc_summary, task_report
 from raman_bayes.config.settings import LoadedSettings, load_settings, requested_profile
-from raman_bayes.domain.errors import ConfigError, DatasetStoreError
+from raman_bayes.domain.errors import ConfigError, DatasetStoreError, InputError, RamanBayesError
 from raman_bayes.domain.run import SEED_LIMIT, RunConfig
+from raman_bayes.logging import setup_logging
 
 JsonOpt = Annotated[
     bool,
@@ -97,12 +101,12 @@ def _succeed(
     _finish(envelope, as_json)
 
 
-def _infrastructure(command: str, error: Exception, as_json: bool) -> NoReturn:
+def _infrastructure(command: str, problem: str, error: Exception, as_json: bool) -> NoReturn:
     envelope = CliEnvelope(
         command=command,
         exit_code=ExitCode.BACKEND,
         ok=False,
-        message=f"raman {command}: storage problem",
+        message=f"raman {command}: {problem}",
         errors=(str(error),),
     )
     _finish(envelope, as_json)
@@ -353,7 +357,7 @@ def plan(
     try:
         result = plan_run(config, loaded)
     except DatasetStoreError as exc:
-        _infrastructure("plan", exc, as_json)
+        _infrastructure("plan", "storage problem", exc, as_json)
     if result.plan is None or result.run_dir is None:
         _finish(_invalid("plan", "cannot plan this run", result.errors, result.warnings), as_json)
     planned = result.plan
@@ -419,7 +423,44 @@ def run_task(
     as_json: JsonOpt = False,
 ) -> None:
     """Run one task of a plan (invoked by backends)."""
-    _stub("run-task", as_json)
+    setup_logging()
+    loaded = _settings("run-task", profile, as_json)
+    request = TaskRequest(
+        run_dir=loaded.settings.paths.runs_root / run,
+        task_index=task,
+        workers=workers or 1,
+        lock_stale=timedelta(minutes=loaded.settings.lock_stale_minutes),
+    )
+    try:
+        outcome = run_one_task(request)
+    except InputError as exc:
+        _finish(_invalid("run-task", "cannot run this task", (str(exc),), ()), as_json)
+    except (RamanBayesError, OSError) as exc:
+        _infrastructure("run-task", "task stopped", exc, as_json)
+    _finish(_task_envelope(run, outcome), as_json)
+
+
+def _task_envelope(run: str, outcome: TaskOutcome) -> CliEnvelope:
+    code = ExitCode.OK if outcome.status is RunTaskStatus.DONE else ExitCode.NOTHING_TO_DO
+    task = outcome.task
+    data = {
+        "run_id": run,
+        "task_index": task.task_index,
+        "status": outcome.status.value,
+        "spec_start": task.spec_start,
+        "spec_stop": task.spec_stop,
+        "n_parts_written": outcome.n_parts_written,
+        "n_parts_kept": outcome.n_parts_kept,
+        "done": outcome.marker.model_dump(mode="json") if outcome.marker else None,
+        "lock": outcome.holder.model_dump(mode="json") if outcome.holder else None,
+    }
+    return CliEnvelope(
+        command="run-task",
+        exit_code=code,
+        ok=code is ExitCode.OK,
+        message=task_report(run, outcome),
+        data=data,
+    )
 
 
 @app.command()

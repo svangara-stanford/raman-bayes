@@ -1,4 +1,4 @@
-"""Errors a user can act on, raised by io/ and storage/ and reported by the CLI (DESIGN.md §10).
+"""Errors a user can act on, raised below the CLI and reported by it (DESIGN.md §10).
 
 They live in domain/ because cli/ may import only app/, domain/, config/ and logging. Every
 message names the file and what is wrong with it; InputError and its subclasses exit 2.
@@ -7,8 +7,11 @@ message names the file and what is wrong with it; InputError and its subclasses 
 import re
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 from pydantic import ValidationError
+
+from raman_bayes.domain.markers import LockHolder
 
 __all__ = [
     "AxisMismatchError",
@@ -17,6 +20,8 @@ __all__ = [
     "CountTooLargeError",
     "DatasetStoreError",
     "DuplicateSpectrumError",
+    "EngineContractError",
+    "EngineMismatchError",
     "FilenamePatternError",
     "FilenamePatternGroupsError",
     "FilenamePatternSyntaxError",
@@ -28,8 +33,10 @@ __all__ = [
     "InfoFilenameError",
     "InfoValueError",
     "InputError",
+    "InvalidDoneMarkerError",
     "InvalidEngineError",
     "InvalidProfileError",
+    "InvalidRunPlanError",
     "InvalidScanInfoError",
     "LegacyCsvError",
     "LegacyCsvHeaderError",
@@ -42,12 +49,15 @@ __all__ = [
     "NoScanFolderError",
     "OutOfGridSpectrumError",
     "RamanBayesError",
+    "RunPlanNotFoundError",
     "ScanFolderError",
     "SpectrumFileError",
     "SpectrumLineError",
     "SpectrumRowCountError",
     "SpectrumScanMismatchError",
     "StaleStatusError",
+    "TaskIndexError",
+    "TaskLockedError",
     "TaskSizeRequiredError",
     "TimeSeriesNotSupportedError",
     "TooManyTasksError",
@@ -71,6 +81,19 @@ def _some(names: Sequence[str], total: int | None = None) -> str:
 
 class RamanBayesError(Exception):
     """Base of every error the CLI reports as a message rather than a traceback."""
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        """Pickle as the message and attributes, without calling the subclass constructor."""
+        # Subclasses build one message from several arguments, so the default, which calls
+        # cls(*args) with that message alone, cannot rebuild them. Spawn workers send errors
+        # back to their parent by pickling, so rebuild from the message and attributes instead.
+        return (_rebuild, (type(self), self.args), self.__dict__)
+
+
+def _rebuild(cls: type[RamanBayesError], args: tuple[Any, ...]) -> RamanBayesError:
+    error = cls.__new__(cls)
+    Exception.__init__(error, *args)
+    return error
 
 
 class InputError(RamanBayesError):
@@ -336,6 +359,72 @@ class TaskSizeRequiredError(InputError):
             f"the {backend} backend needs --spectra-per-task; "
             "choosing a task size from a benchmark is not supported yet"
         )
+
+
+# ---------------------------------------------------------------- run-task
+
+
+class RunPlanNotFoundError(InputError):
+    """No ``run_plan.json`` where the run should be."""
+
+    def __init__(self, path: Path) -> None:
+        super().__init__(f"{path}: no run plan here; check the run id and the profile's runs_root")
+
+
+class InvalidRunPlanError(RamanBayesError):
+    """``run_plan.json`` exists but cannot be read as a run plan."""
+
+    def __init__(self, path: Path, problem: str) -> None:
+        super().__init__(f"{path}: not a valid run plan: {problem}")
+
+
+class TaskIndexError(InputError):
+    """The plan has no task with this index."""
+
+    def __init__(self, run_id: str, n_tasks: int, task_index: int) -> None:
+        super().__init__(
+            f"run {run_id} has {n_tasks} tasks (0 to {n_tasks - 1}); there is no task {task_index}"
+        )
+
+
+class EngineMismatchError(RamanBayesError):
+    """The engine a plan names is missing here or has another version."""
+
+    def __init__(self, run_id: str, engine: str, version: str, found: str) -> None:
+        super().__init__(
+            f"run {run_id} was planned with engine {engine} {version}, but {found}; "
+            "run it where that engine version is installed"
+        )
+
+
+class EngineContractError(RamanBayesError):
+    """An engine returned results that do not match the spectra it was given."""
+
+    def __init__(self, engine: str, version: str, problem: str) -> None:
+        super().__init__(f"engine {engine} {version} broke its contract: {problem}")
+
+
+class TaskLockedError(RamanBayesError):
+    """Another run-task holds a fresh ``_LOCK`` on this task.
+
+    ``holder`` is the lock's record, or None while its holder is still writing it.
+    """
+
+    def __init__(self, task_dir: Path, holder: LockHolder | None) -> None:
+        self.holder = holder
+        who = (
+            f"host {holder.host}, pid {holder.pid}, since {holder.started_at.isoformat()}"
+            if holder is not None
+            else "its holder is still writing the lock"
+        )
+        super().__init__(f"{task_dir}: task already running ({who})")
+
+
+class InvalidDoneMarkerError(RamanBayesError):
+    """A ``_DONE.json`` exists but cannot be read."""
+
+    def __init__(self, path: Path, problem: str) -> None:
+        super().__init__(f"{path}: unreadable done marker: {problem}")
 
 
 # ---------------------------------------------------------------- legacy priors CSV

@@ -51,6 +51,7 @@ NAMES = list(COMMANDS)
 IMPLEMENTED = {
     "ingest",
     "plan",
+    "run-task",
     "validate-priors",
     "priors import-csv",
     "priors export-csv",
@@ -154,10 +155,17 @@ def test_profile_is_accepted(name: str) -> None:
 # ---------------------------------------------------------------- specific options
 
 
-@pytest.mark.parametrize(("workers", "code"), [("4", 3), ("abc", 2), ("0", 2)])
-def test_run_task_workers(workers: str, code: int) -> None:
-    result = runner.invoke(app, [*COMMANDS["run-task"], "--workers", workers])
-    assert result.exit_code == code, result.output
+@pytest.mark.parametrize(("workers", "usage_error"), [("4", False), ("abc", True), ("0", True)])
+def test_run_task_workers(workers: str, usage_error: bool) -> None:
+    if usage_error:
+        result = runner.invoke(app, [*COMMANDS["run-task"], "--workers", workers])
+        assert result.exit_code == 2
+        assert "--workers" in result.output
+        return
+    # Not a Click usage error: under --json a parsed command always writes one envelope.
+    result = runner.invoke(app, [*COMMANDS["run-task"], "--workers", workers, "--json"])
+    (line,) = result.stdout.splitlines()
+    assert CliEnvelope.model_validate_json(line).command == "run-task", result.output
 
 
 @pytest.mark.parametrize("missing", ["--run", "--task"])
